@@ -1,13 +1,16 @@
 # Run public/install.ps1 the way `irm | iex` does, inside a throwaway home, and report what it did.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer_smoke.ps1 -Wheel <zergswarm-*.whl> [-Uv <folder with uv.exe>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer_smoke.ps1 -Live [-Uv <folder with uv.exe>]
 #
-# Without -Uv it takes the pipx path (pip installs pipx into the throwaway profile); with -Uv, the uv path. Home,
+# -Wheel installs that file through this tree's installer; -Live runs the published one-liner exactly as a user does
+# (the script from GitHub's main branch, the newest release's wheel). Without -Uv it takes the pipx path (pip installs pipx into the throwaway profile); with -Uv, the uv path. Home,
 # AppData, pipx and uv folders all live under a temp folder, a stand-in browser records the URL it is asked to open,
 # and the real ~/.claude.json is never written. One thing a sandbox cannot redirect: `pipx ensurepath` and
 # `uv tool update-shell` write the USER PATH in the registry (HKCU\Environment), so this script restores that value
 # exactly (same text, same ExpandString kind) when it ends (2026-09-26: a first run left three temp folders there).
-param([Parameter(Mandatory = $true)][string]$Wheel, [string]$Uv = "")
+param([string]$Wheel = "", [switch]$Live, [string]$Uv = "")
+if (-not $Wheel -and -not $Live) { "Give -Wheel <file> or -Live"; return }
 $Repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $T = Join-Path ([IO.Path]::GetTempPath()) ("zergswarm-smoke-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 $H = Join-Path $T "home"
@@ -27,7 +30,7 @@ try {
     $env:APPDATA = Join-Path $H "AppData\Roaming"; $env:LOCALAPPDATA = Join-Path $H "AppData\Local"
     Remove-Item Env:ZSWARM_HOME, Env:CLAUDE_CONFIG_DIR, Env:CODEX_HOME -ErrorAction SilentlyContinue
     Get-ChildItem Env: | Where-Object { $_.Name -match "_API_KEYS?$|^HF_TOKENS?$" } | ForEach-Object { Remove-Item "Env:$($_.Name)" }
-    $env:ZERGSWARM_SOURCE = (Resolve-Path $Wheel).Path
+    if ($Wheel) { $env:ZERGSWARM_SOURCE = (Resolve-Path $Wheel).Path } else { Remove-Item Env:ZERGSWARM_SOURCE -ErrorAction SilentlyContinue }
     $opened = Join-Path $T "opened.txt"
     $fake = Join-Path $T "browser.py"
     Set-Content $fake "import sys`nopen(sys.argv[1], 'w').write(sys.argv[2].split('?')[0])"
@@ -37,7 +40,8 @@ try {
         $env:UV_CACHE_DIR = Join-Path $T "uv-cache"; $env:UV_TOOL_DIR = Join-Path $T "uv-tools"
         $env:UV_TOOL_BIN_DIR = Join-Path $T "uv-bin"; $env:UV_PYTHON_INSTALL_DIR = Join-Path $T "uv-python"
     }
-    Get-Content $installer -Raw | Invoke-Expression
+    if ($Live) { Invoke-RestMethod "https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.ps1" | Invoke-Expression }
+    else { Get-Content $installer -Raw | Invoke-Expression }
     "---- results"
     "zswarm: " + (Get-Command zswarm -ErrorAction SilentlyContinue).Source
     $cj = Join-Path $H ".claude.json"
