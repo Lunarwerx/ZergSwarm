@@ -3,7 +3,7 @@
 # It installs the newest release with uv (or pipx when uv is absent but Python 3.11+ is present; with
 # neither, it installs uv, which brings its own Python), then runs `zswarm setup` to connect ZergSwarm
 # to every AI assistant it finds (Claude Code, Claude Desktop, Codex) and open the web console.
-# ZERGSWARM_SOURCE installs that wheel path or URL instead (used for testing); ZERGSWARM_NO_SETUP skips `zswarm setup`.
+# ZERGSWARM_SOURCE installs that wheel path or URL instead (used for testing); ZSWARM_NO_SETUP (or the older ZERGSWARM_NO_SETUP) skips `zswarm setup`.
 #
 # One script block, left with `return`: under `irm | iex` an `exit` would close the window before the message could
 # be read. Native commands are judged by $LASTEXITCODE, never by $ErrorActionPreference = "Stop", which in Windows
@@ -67,7 +67,7 @@
 
     Write-Host ""
     Write-Host "ZergSwarm is installed." -ForegroundColor Green
-    if ($env:ZERGSWARM_NO_SETUP) {
+    if ($env:ZSWARM_NO_SETUP -or $env:ZERGSWARM_NO_SETUP) {  # ZSWARM_ like every other setting; the old name still works
         Write-Host "  zswarm setup     connect your assistants and open the console"
         Write-Host "  a new terminal will see the zswarm command too"
         return

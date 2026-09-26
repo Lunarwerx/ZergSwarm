@@ -37,6 +37,8 @@ def _err(msg: str) -> Result:
     "openrouter API 404: No endpoints found for deepseek/deepseek-v4.1-flash.",
     'deepseek API 400: {"error":{"message":"Content Exists Risk","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}',
     "gemini API 429: RESOURCE_EXHAUSTED Quota exceeded",  # a free tier spent for the day must down-route
+    # the MODEL's bad sample, still bad after the client's resamples: Dredd's drafter died on it (2026-09-26)
+    'groq API 400: {"error":{"message":"Tool call validation failed: attempted to call tool \'search\' which was not in request.tools","code":"tool_use_failed"}}',
     # Claude Code's renderings, from a cc worker (2026-09-17: the DeepSeek keys will not be topped up again)
     "claude exit 1: API Error: 503 upstream connect error",
     "NoUsableKey: no key to run on: every key in the pool is disabled; top up and run `zswarm keys probe`",

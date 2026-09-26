@@ -60,7 +60,7 @@ words, in a new chat: *"Use zswarm to review every file in src/ for bugs."* You 
 | **It picks the model** | Leave the model on `auto`: each task gets the cheapest configured model whose published test scores meet its bar. |
 | **Starts on a free key** | Gemini, Groq and Cerebras have free tiers that AUTO can use. Paste one key and it works. |
 | **Keys that look after themselves** | A rate-limited key rests, a key out of credit is set aside, a key the provider refuses is never kept. When a provider runs dry, tasks move to the next capable model instead of stopping. |
-| **Every call costed** | Each task records its model, time and price. The console charts spend per day, per provider and per model. Set a daily cap and new work stops once it is reached; there is none until you do. |
+| **Every call costed** | Each task records its model, time and price. The console charts spend per day, per provider and per model. There is no spending limit unless you set one; set a daily limit and new work stops when a day reaches it. |
 | **Workers get only what you allow** | Each task names its tools: `none`, `read`, `edit` (files inside its folder) or `all` (adds a shell). |
 | **One console for all of it** | `zswarm ui`: keys, providers, models, priorities, roles, jobs and client setup, in light or dark. |
 
@@ -96,7 +96,7 @@ Every [release](https://github.com/Lunarwerx/ZergSwarm/releases) also carries th
 if you would rather download and install a file (`pipx install zergswarm-<version>-py3-none-any.whl`).
 
 New terminals see the `zswarm` command; check it with `zswarm --version`. To install without connecting anything,
-set `ZERGSWARM_NO_SETUP=1` first; then `zswarm setup --client claude-code` connects just that one (or `codex`,
+set `ZSWARM_NO_SETUP=1` first; then `zswarm setup --client claude-code` connects just that one (or `codex`,
 `claude-desktop`).
 
 ## 🚀 Quick start
@@ -107,7 +107,8 @@ set `ZERGSWARM_NO_SETUP=1` first; then `zswarm setup --client claude-code` conne
    `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
 2. **Add a key.** One is enough. In the console, pick a provider (Gemini or Groq is the quickest, both free), follow
    its *Get a key* link, and paste the key on its page. The
-   providers marked *picks automatically* are the ones ZergSwarm can choose models from by itself. The key is
+   providers marked *picks automatically* (Gemini, Groq, Cerebras, DeepSeek and OpenRouter) are the ones ZergSwarm
+   can choose models from by itself; the others you name when you want them. The key is
    checked with the provider straight away and kept only if it works. From the terminal: `zswarm keys add gemini`
    (it asks for the key, hidden, and checks it the same way).
 3. **Ask your agent to use it**, in a new chat:

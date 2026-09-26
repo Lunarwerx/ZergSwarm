@@ -64,7 +64,13 @@ _UNAVAILABLE = re.compile(
     # detail; measured 2026-09-19 on two read-only inventory tasks over Graphify-Labs/graphify (a README with
     # CJK translation links). That is the HOST declining the task, not the task failing, so the next leg
     # (the same open-weights model on OpenRouter or Hugging Face, which do not run that filter) gets it.
-    r"|Content Exists Risk",
+    r"|Content Exists Risk"
+    # A 400 that is the MODEL's bad output, not our request (client._MODEL_OUTPUT_400: gpt-oss on groq calling a tool
+    # that does not exist). It reaches this check only after the client resampled it MODEL_OUTPUT_RETRIES times, so that
+    # leg cannot produce a parseable answer to this prompt; the next model can. Dredd's copy drafter died on the first
+    # candidate with it (2026-09-26, "attempted to call tool 'search' which was not in request.tools").
+    r"|API (?:Error:? )?400\b[\s\S]{0,400}?(?:tool_use_failed|output_parse_failed|Tool call validation failed"
+    r"|Failed to parse tool call|generated output that could not be parsed)",
     re.I,
 )
 

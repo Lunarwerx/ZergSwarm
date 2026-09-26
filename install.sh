@@ -5,7 +5,7 @@
 # uv and a Python 3.11+ present it uses pipx; with neither it installs uv, which brings its own Python.
 # Then it runs `zswarm setup`, which connects ZergSwarm to Claude Code, Claude Desktop, and Codex, and
 # opens its console. Set ZERGSWARM_SOURCE to a wheel path or URL to install that instead, and
-# ZERGSWARM_NO_SETUP to skip `zswarm setup`. It changes nothing else.
+# ZSWARM_NO_SETUP (or the older ZERGSWARM_NO_SETUP) to skip `zswarm setup`. It changes nothing else.
 set -eu
 REPO="Lunarwerx/ZergSwarm"
 
@@ -96,7 +96,7 @@ export PATH
 
 echo
 echo "ZergSwarm is installed. Open a new terminal to use the zswarm command yourself."
-if [ -n "${ZERGSWARM_NO_SETUP:-}" ]; then
+if [ -n "${ZSWARM_NO_SETUP:-}${ZERGSWARM_NO_SETUP:-}" ]; then  # ZSWARM_ like every other setting; the old name still works
     echo "Run zswarm setup to connect your assistants and open the console."
 # setup says what is left (a key, then a first ask), so nothing is repeated after it.
 elif ! zswarm setup </dev/null; then
