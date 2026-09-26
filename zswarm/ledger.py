@@ -85,7 +85,7 @@ def daily(days: int = 14) -> list[dict]:
                     _fold_day(line)
         today = dt.datetime.now().astimezone().date()
         wanted = [(today - dt.timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
-        empty = {"tasks": 0, "ok": 0, "error": 0, "cost_usd": 0.0, "providers": {}}
+        empty = {"tasks": 0, "ok": 0, "error": 0, "cost_usd": 0.0, "providers": {}, "models": {}}
         return [{"date": d, **_DAILY["days"].get(d, empty)} for d in wanted]
 
 
@@ -143,13 +143,20 @@ def _fold_day(line: bytes) -> None:
         return
     if r.get("cached"):
         return  # an answer a resume reused: no call, no spend
-    b = _DAILY["days"].setdefault(day, {"tasks": 0, "ok": 0, "error": 0, "cost_usd": 0.0, "providers": {}})
+    b = _DAILY["days"].setdefault(day, {"tasks": 0, "ok": 0, "error": 0, "cost_usd": 0.0, "providers": {}, "models": {}})
     b["tasks"] += 1
-    b["ok" if r.get("status") == "ok" else "error"] += 1
+    outcome = "ok" if r.get("status") == "ok" else "error"
+    b[outcome] += 1
     cost = r.get("cost_usd") or 0.0
     b["cost_usd"] = round(b["cost_usd"] + cost, 6)
     who = r.get("provider") or "other"
     b["providers"][who] = round(b["providers"].get(who, 0.0) + cost, 6)
+    # Per model too, for the console's provider and model pages: [tasks, ok, failed, cost, seconds].
+    m = b["models"].setdefault(str(r.get("model") or "other"), [0, 0, 0, 0.0, 0.0])
+    m[0] += 1
+    m[1 if outcome == "ok" else 2] += 1
+    m[3] = round(m[3] + cost, 6)
+    m[4] = round(m[4] + float(r.get("seconds") or 0.0), 3)
 
 
 def ledger_summary(days: float = 1.0) -> dict:

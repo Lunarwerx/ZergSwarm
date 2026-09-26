@@ -9,7 +9,7 @@ installed in (`python -c "import sys; print(sys.executable)"`).
 
 ## Claude Code (terminal, VS Code / JetBrains, desktop app Code tab)
 
-File: `~/.claude.json` (and `$CLAUDE_CONFIG_DIR/.claude.json`), as the [README](../README.public.md) sets up. By default every chat connects to
+File: `~/.claude.json` (and `$CLAUDE_CONFIG_DIR/.claude.json`), as the [README](../README.md) sets up. By default every chat connects to
 ONE shared server on 127.0.0.1:7790 instead of starting its own process per chat; the `headersHelper` starts that
 server on demand and tells it which folder the chat is in.
 

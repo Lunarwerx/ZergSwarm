@@ -445,16 +445,21 @@ def test_a_key_whose_daily_quota_is_spent_rests_until_the_reset_not_twenty_secon
     assert c.pool.soonest_wake() == pytest.approx(client_mod._until_quota_reset(), abs=60)
 
 
-def test_a_key_with_a_zero_quota_where_the_call_landed_rests_half_an_hour_not_twenty_seconds():
+_GEMINI_ZERO = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [{"metadata": {
+    "quota_limit": "GenerateContentRequestsPerMinutePerProjectPerRegion", "quota_limit_value": "0", "quota_location": "us-south1"}}]}}
+
+
+@pytest.mark.parametrize("headers,body", [
+    ({"retry-after": "7"}, _GEMINI_ZERO),  # Gemini says it in the body
+    ({"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "0"}, {"message": "Requests rate limit exceeded"}),  # Mistral, in a header
+])
+def test_a_key_with_a_zero_quota_where_the_call_landed_rests_half_an_hour_not_twenty_seconds(headers, body):
     """2026-09-26: every Gemini key answered 429 with quota_limit_value "0" for its project in us-south1. Rested 20 s,
     the pool was rotated for 34 minutes per task by 124 builders, all of which died; rested long, the leg leaves the
-    plan until the keys wake."""
+    plan until the keys wake. The same day every sampled Mistral key answered 429 with a request limit of 0 a minute."""
     from zswarm import client as client_mod
 
-    body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [{"metadata": {
-        "quota_limit": "GenerateContentRequestsPerMinutePerProjectPerRegion", "quota_limit_value": "0",
-        "quota_location": "us-south1"}}]}}
-    c = _client_with_transport(lambda req: httpx.Response(429, headers={"retry-after": "7"}, json=body), keys=K[:1])
+    c = _client_with_transport(lambda req: httpx.Response(429, headers=headers, json=body), keys=K[:1])
     with pytest.raises(ApiError):
         asyncio.run(asyncio.wait_for(c.chat([{"role": "user", "content": "x"}], rest_budget_s=5), timeout=5))
     assert c.pool.available() == 0
@@ -480,3 +485,17 @@ def test_a_checked_key_the_provider_refuses_is_disabled_with_the_reason(monkeypa
     assert r["result"] == "rejected" and "sk-check" not in json.dumps(r)
     row = next(x for x in KeyPool([good, bad], "groq").status() if x["fingerprint"] == config.fingerprint(bad))
     assert row["disabled"] and "rejected this key" in row["disabled_reason"]
+
+
+# Contract: a key added from the terminal is checked with the provider, like one pasted in the console, and a key the
+# provider refuses is not kept. Regression: `zswarm keys add` saved whatever it was given (audit, 2026-09-26).
+def test_the_terminal_does_not_keep_a_key_the_provider_refuses(monkeypatch, capsys):
+    from zswarm import cli, keys
+
+    async def refused(provider, fingerprint):
+        return {"fingerprint": fingerprint, "result": "rejected", "note": "groq rejected this key (HTTP 401)"}
+
+    monkeypatch.setattr(keys, "check", refused)
+    monkeypatch.setattr(sys, "stdin", __import__("io").StringIO("gsk_not_a_real_key_0001\n"))
+    assert cli.main(["keys", "add", "groq"]) == 1
+    assert config.user_keys("groq") == [] and "not kept" in capsys.readouterr().err

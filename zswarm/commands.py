@@ -397,7 +397,7 @@ async def cmd_keys(a) -> int:
 
     action = getattr(a, "action", "list")
     if action in ("add", "remove"):
-        return _keys_edit(a, action)
+        return await _keys_edit(a, action)
     if action == "list":
         out = keymod.report(a.provider)
     elif action == "probe":
@@ -415,7 +415,7 @@ async def cmd_keys(a) -> int:
     return 0
 
 
-def _keys_edit(a, action: str) -> int:
+async def _keys_edit(a, action: str) -> int:
     """`keys add <provider>` reads the key from stdin (piped) or a hidden prompt, so it never lands in shell history;
     `keys remove <fingerprint> --provider P` takes it out of the key store. Both go through settings.py."""
     from . import settings
@@ -432,7 +432,17 @@ def _keys_edit(a, action: str) -> int:
             else:
                 key = sys.stdin.readline()
             out = settings.add_key(provider, key)
-            print(f"{provider}: {'added' if out['added'] else out.get('note')} {out['fingerprint']}")
+            if not out["added"]:
+                print(f"{provider}: {out.get('note')} {out['fingerprint']}")
+                return 0
+            from . import keys
+
+            checked = await keys.check(provider, out["fingerprint"])
+            if checked.get("result") == "rejected":  # the console does the same: a refused key is not kept
+                settings.remove_key(provider, out["fingerprint"])
+                print(f"{provider} did not accept that key, so it was not kept: {checked.get('note')}", file=sys.stderr)
+                return 1
+            print(f"{provider}: added {out['fingerprint']} ({checked.get('note')})")
         else:
             if not (a.provider and a.fingerprint):
                 raise settings.SettingsError("zswarm keys remove <fingerprint> --provider <provider>")

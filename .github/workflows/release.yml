@@ -1,0 +1,70 @@
+name: Release
+
+# Push a tag like v0.2.0: this runs the tests, builds the wheel and source archive, installs the wheel on all three
+# systems, and publishes a GitHub release with both files attached. install.ps1 and install.sh install from it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag, pyproject.toml and zswarm/__init__.py agree on the version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"(.+?)\"", pathlib.Path("zswarm/__init__.py").read_text()).group(1))')"
+          pkg="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          test "$want" = "$have" || { echo "tag $GITHUB_REF_NAME but zswarm/__init__.py says $have"; exit 1; }
+          test "$want" = "$pkg" || { echo "tag $GITHUB_REF_NAME but pyproject.toml says $pkg"; exit 1; }
+      - run: python -m pip install -e ".[test]" build
+      - run: python -m pytest -q
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  wheel-works:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # From an empty folder, so Python imports the installed wheel and nothing else.
+      - name: Install the wheel and run it
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          mkdir -p "$RUNNER_TEMP/empty" && cd "$RUNNER_TEMP/empty"
+          zswarm --version
+          python -c "from importlib.resources import files; from zswarm import config; assert len(config.PROVIDERS) >= 10, config.PROVIDERS; assert files('zswarm').joinpath('ui', 'console.html').is_file(); print('providers', len(config.PROVIDERS))"
+
+  release:
+    needs: wheel-works
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

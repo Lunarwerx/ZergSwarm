@@ -318,9 +318,21 @@ details.more>.more-in>section:first-child{margin-top:8px}
   details::details-content{transition:none!important}
   #left,#scrim{transition:none!important}
 }
-.av.avi{background:#fff;padding:2px;object-fit:contain;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+/* a provider's own logo stands alone: no tile behind it (owner, 2026-09-26) */
+.av.avi{background:none;padding:0;object-fit:contain;box-shadow:none;border-radius:4px}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .pcard{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--sf)}
+/* Data tables are dense on a mouse screen: about twice the rows in the same height (owner, 2026-09-26). Touch keeps
+   its 44px targets, so none of this applies to a coarse pointer. */
+@media (pointer:fine){
+  .t td,.t th[scope=row]{padding:0 8px;line-height:1.3}
+  .t th{padding:4px 8px}
+  .t .b{min-height:17px;padding:0 8px;font-size:12px;line-height:15px}
+  .t input:not([type=checkbox]):not([type=range]){min-height:17px;padding:0 6px;font-size:12px;line-height:15px}
+  .t .tag{line-height:14px}
+  .t .star{padding:0 5px;line-height:15px}
+  .t tr.tier td{padding-top:6px}
+}
 .faq h2{font-size:15px;font-weight:600;margin:26px 0 4px}.faq p{margin:0 0 8px;max-width:720px;color:var(--t2)}
 </style>
 </head>
@@ -431,7 +443,7 @@ function markBusy(k) {
 }
 // Where focus goes after the next detail render, when the focused control is removed or moved (a function of the box).
 let PENDF = null;
-const ROOTS = { overview: "Overview", providers: "Providers", models: "Models", routing: "Routing & roles", clients: "Clients", jobs: "Jobs", new: "Add", help: "Help" };
+const ROOTS = { overview: "Overview", providers: "Providers", models: "All models", routing: "Routing & roles", clients: "Clients", jobs: "Jobs", new: "Add", help: "Help" };
 const CLIENT_INFO = {
   "claude-code": ["Claude Code", "The terminal CLI, the VS Code / JetBrains extensions and the desktop app's Code tab all read this file. Uses the one shared server on this machine."],
   "claude-desktop": ["Claude Desktop", "The Claude desktop app's chat. It starts zswarm as a stdio server; restart the app after installing."],
@@ -490,7 +502,7 @@ const disc = (k, title, inner) => `<details class="more" data-k="d:${esc(k)}"${O
 // The star of a model: ☆ gives it the next priority number, ★n clears it. STARM: the model whose change is in flight.
 // A model AUTO does not rank never meets its bar, so a star would do nothing: it gets none (a number it already has can still be cleared).
 let STARM = null;
-const NOAUTO = "not tested, so zswarm never picks it by itself: reach it by name or by a role";
+const NOAUTO = "not tested, so ZergSwarm never picks it by itself: reach it by name or by a role";
 const HELP_URL = "https://github.com/Lunarwerx/ZergSwarm#readme", ISSUES_URL = "https://github.com/Lunarwerx/ZergSwarm/issues";
 // Only http(s) becomes a link: esc() stops markup, not a javascript: URL.
 const xlink = (label, url) => /^https?:\/\//i.test(url || "") ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${label} ${ic("external", "s")}<span class="sr"> (opens in a new tab)</span></a>` : "";
@@ -614,7 +626,8 @@ function segPath(x, y, w, h, rl, rr) {
 }
 function colPath(x, y, w, h) { const r = Math.min(4, w / 2, h), X = f1(x), X2 = f1(x + w), Y = f1(y), B = f1(y + h);
   return `M${X} ${B}V${f1(y + r)}Q${X} ${Y} ${f1(x + r)} ${Y}H${f1(x + w - r)}Q${X2} ${Y} ${X2} ${f1(y + r)}V${B}Z` }
-const svgAv = (name, x, y) => `<rect class="avr" x="${x}" y="${f1(y)}" width="18" height="18" rx="4"/><text class="avt" x="${x + 9}" y="${f1(y + 12.2)}" text-anchor="middle">${esc(ini(name))}</text>`;
+// A provider's logo in a chart row, like everywhere else; its initials on a tint when it has none.
+const svgAv = (name, x, y) => ICONV[name] ? `<image href="/ui/favicon/${encodeURIComponent(name)}?v=${esc(ICONV[name])}" x="${x}" y="${f1(y)}" width="18" height="18" preserveAspectRatio="xMidYMid meet"/>` : `<rect class="avr" x="${x}" y="${f1(y)}" width="18" height="18" rx="4"/><text class="avt" x="${x + 9}" y="${f1(y + 12.2)}" text-anchor="middle">${esc(ini(name))}</text>`;
 // Legend items: [label, color role, key shape (rect | dot | line | star | "" for none), status icon, count]. Text is ink; only the key wears the color.
 // With no key shape, the icon itself wears the color: it matches an icon mark in the chart.
 const legend = (items) => `<ul class="ch-leg">${items.filter(Boolean).map(([l, c, k = "rect", icn, n]) => `<li style="--k:var(${c})">${k === "star" ? `<svg class="k-star" aria-hidden="true"><use href="#i-star"/></svg>` : k ? `<i class="k-${k}" aria-hidden="true"></i>` : ""}${icn ? ic(icn, k ? "" : "kc") : ""}${esc(l)}${n != null ? ` <b>${esc(n)}</b>` : ""}</li>`).join("")}</ul>`;
@@ -772,7 +785,7 @@ function healthFig(W) {
   const take = `<b>${num(R)}</b> of ${num(K)} keys ready across ${ps.length} ${plural(ps.length, "provider")}` + (RS ? `; ${num(RS)} resting (rate-limited, back by themselves)` : "") + (DS ? `; ${num(DS)} disabled` : "") + ".";
   const rows = ps.map((p) => ({ p, label: p.name + (p.enabled ? "" : " (off)"), av: p.name, go: pid(p.name),
     tip: { h: p.name + (p.enabled ? "" : " · switched off"), rows: [[num(p.ready), "ready", "--v-ok"], [num(p.resting || 0), "resting", "--v-warn"], [num(p.disabled || 0), "disabled", "--v-bad"], [num(p.keys), "keys in all"]] } }));
-  const svg = memo("health", ps.map((p) => [p.name, p.enabled, p.keys, p.ready, p.resting, p.disabled]), W,
+  const svg = memo("health", ps.map((p) => [p.name, p.enabled, p.keys, p.ready, p.resting, p.disabled, ICONV[p.name]]), W,
     () => hbars("health", W, T, rows, [{ parts: (r) => parts(r.p), val: (r) => `${cnum(r.p.ready)}/${cnum(r.p.keys)}` }]));
   const table = ctable([["Provider"], ["Ready", 1], ["Resting", 1], ["Disabled", 1], ["Keys", 1]], ps.map((p) => [pname(p.name, pid(p.name)), num(p.ready), num(p.resting || 0), num(p.disabled || 0), num(p.keys)]));
   return fig("health", T, take, svg, { icon: "key", table, legend: legend([["ready", "--v-ok", "rect", "check"], ["resting", "--v-warn", "rect", "clock"], ["disabled", "--v-bad", "rect", "error"]]) });
@@ -787,7 +800,7 @@ function moneyFig(W) {
   const shown = list.length > 8 ? [...list.slice(0, 7), [`${list.length - 7} others`, list.slice(7).reduce((a, [, v]) => a + v, 0), true]] : list, known = new Set(Z.S.providers.map((p) => p.name));
   const rows = shown.map(([k, v, other]) => ({ v, label: k, av: other ? null : k, go: !other && known.has(k) ? pid(k) : null, tip: { h: k, rows: [[mon(v), "spent", "--v-s1"], [pctS(v, total), "of the total"]] } }));
   const take = `<b>${esc(list[0][0])}</b> took ${pctS(list[0][1], total)} of the ${esc(cusd(total))}` + (list.length > 1 ? `; ${esc(list[1][0])} came next with ${pctS(list[1][1], total)}.` : ".");
-  const svg = memo("money", shown, W, () => hbars("money", W, T, rows, [{ parts: (r) => [[r.v, "--v-s1"]], val: (r) => cusd(r.v) }]));
+  const svg = memo("money", shown.map(([k, v, o]) => [k, v, o, ICONV[k]]), W, () => hbars("money", W, T, rows, [{ parts: (r) => [[r.v, "--v-s1"]], val: (r) => cusd(r.v) }]));
   const table = ctable([["Provider"], ["Spent", 1], ["Share", 1]], list.map(([k, v]) => [known.has(k) ? pname(k, pid(k)) : pname(k), esc(mon(v)), pctS(v, total)]));
   return fig("money", T, take, svg, { icon: "provider", table, cls });
 }
@@ -805,6 +818,45 @@ function scatterFig() {
   const table = ctable([["Model"], ["Provider"], ["Score", 1], ["Benchmark cost", 1], ["Starred", 1], ["Best for its cost"]],
     byX.map((p) => [link(p.m.label || p.m.name, mid(p.m)), pname(p.m.provider), esc(+p.y.toPrecision(4)), esc(mon(p.x)), p.m.priority ? "★" + esc(p.m.priority) : "", F.has(p.m.name) ? chip("ok", "yes") : ""]));
   return fig("scatter", T, take, svg, { icon: "route", h: 2, table, legend: legend([["Starred: tried first", "--ac", "star"], ["Best score for its cost", "--v-fr", "dot"], ["Other AUTO models", "--v-de", "dot"]]) });
+}
+// Daily use of a set of models, from the usage data's per-model split: [tasks, ok, failed, cost, seconds].
+function useDays(names) {
+  const set = new Set(names);
+  return USAGE.days.map((d) => { const a = [0, 0, 0, 0, 0];
+    for (const [n, v] of Object.entries(d.models || {})) if (set.has(n)) for (let i = 0; i < 5; i++) a[i] += +v[i] || 0;
+    return { date: d.date, tasks: a[0], ok: a[1], error: a[2], cost_usd: a[3], seconds: a[4] } });
+}
+// A provider's or a model's tasks per day, ok and failed stacked, with what they cost.
+function useFig(id, names, W) {
+  const T = "Use, last 14 days", w = usageWait(id, T, "jobs"); if (w) return w;
+  const days = useDays(names), ok = days.reduce((a, d) => a + d.ok, 0), err = days.reduce((a, d) => a + d.error, 0), all = ok + err, cost = days.reduce((a, d) => a + d.cost_usd, 0);
+  if (!all) return fig(id, T, "", emptyS("jobs", "Not used in the last 14 days", "Tasks it runs show up here per day, ok or failed, with what they cost."), { icon: "jobs", cls: USAGE.stale ? "stale" : "" });
+  const t = days.reduce((a, d) => a + d.seconds, 0);
+  const take = `<b>${esc(cnum(all))}</b> ${plural(all, "task")} in 14 days: ${pctS(err, all)} failed, ${esc(cusd(cost))} spent, ${esc(secs(t / all))} a task on average.`;
+  const svg = memo(id, days, W, () => colChart(id, W, T, days, [{ k: "ok", c: "--v-ok" }, { k: "error", c: "--v-bad" }], cnum,
+    (d) => ({ h: dlong(d.date), rows: [[num(d.ok), "ok", "--v-ok"], [num(d.error), "failed", "--v-bad"], [mon(d.cost_usd), "spent"]] })));
+  const table = ctable([["Day"], ["Tasks", 1], ["Ok", 1], ["Failed", 1], ["Cost", 1]], [...days].reverse().map((d) => [esc(dlong(d.date)), num(d.tasks), num(d.ok), num(d.error), esc(mon(d.cost_usd))]));
+  return fig(id, T, take, svg, { icon: "jobs", table, cls: USAGE.stale ? "stale" : "", legend: legend([["ok", "--v-ok", "rect", "check"], ["failed", "--v-bad", "rect", "error"]]) });
+}
+// A provider's 14 days split by model: tasks (ok and failed) and cost side by side, the busiest model first.
+function perModelFig(id, prov, W) {
+  if (!USAGE || !USAGE.days) return "";
+  const own = Z.S.models.filter((m) => m.provider === prov), by = new Map();
+  for (const d of USAGE.days) for (const [n, v] of Object.entries(d.models || {})) if (own.some((m) => m.name === n)) {
+    const a = by.get(n) || [0, 0, 0, 0, 0]; for (let i = 0; i < 5; i++) a[i] += +v[i] || 0; by.set(n, a) }
+  const list = [...by].filter(([, a]) => a[0] > 0).sort((x, y) => y[1][0] - x[1][0]);
+  if (list.length < 2) return "";  // one model (or none) is the daily chart above, told again
+  const T = "Use per model (14 days)", lab = (n) => (own.find((m) => m.name === n) || {}).label || n;
+  const rows = list.map(([n, a]) => ({ a, label: lab(n), go: mid({ provider: prov, name: n }),
+    tip: { h: lab(n), rows: [[num(a[1]), "ok", "--v-ok"], [num(a[2]), "failed", "--v-bad"], [mon(a[3]), "spent", "--v-s1"], [secs(a[4] / a[0]), "a task on average"]] } }));
+  const [tn, ta] = list[0], worst = list.reduce((b, x) => x[1][2] / x[1][0] > b[1][2] / b[1][0] ? x : b);
+  const take = `${esc(lab(tn))} ran the most, ${esc(cnum(ta[0]))} ${plural(ta[0], "task")}.` + (worst[1][2] ? ` ${esc(lab(worst[0]))} failed most often: ${pctS(worst[1][2], worst[1][0])} of its tasks.` : "");
+  const svg = memo(id, list, W, () => hbars(id, W, T, rows, [
+    { h: "Tasks", parts: (r) => [[r.a[1], "--v-ok"], [r.a[2], "--v-bad"]], val: (r) => cnum(r.a[0]) },
+    { h: "Cost", parts: (r) => [[r.a[3], "--v-s1"]], val: (r) => cusd(r.a[3]) }]));
+  const table = ctable([["Model"], ["Tasks", 1], ["Ok", 1], ["Failed", 1], ["Cost", 1], ["Average time", 1]],
+    rows.map((r) => [link(r.label, r.go), num(r.a[0]), num(r.a[1]), num(r.a[2]), esc(mon(r.a[3])), esc(secs(r.a[4] / r.a[0]))]));
+  return fig(id, T, take, svg, { icon: "model", table, cls: USAGE.stale ? "stale" : "", legend: legend([["ok", "--v-ok", "rect", "check"], ["failed", "--v-bad", "rect", "error"], ["cost", "--v-s1"]]) });
 }
 // The provider page's compact bars: key health, and the key order once some key has a priority number.
 function provHealth(p) {
@@ -882,7 +934,7 @@ const PRICE_NOTE = ["Prices are dollars per million tokens, input and output mix
 const priceNote = () => PRICE_NOTE.map((t, i) => `<p class="hint" style="margin:0 0 ${i === PRICE_NOTE.length - 1 ? 8 : 2}px">${esc(t)}</p>`).join("");
 const ctxk = (m) => m.ctx ? Math.round(m.ctx / 1000) + "k" : "–";
 const when = (s) => String(s || "").replace("T", " ").slice(0, 19);
-const mid = (m) => "models/" + enc(m.provider) + "/" + enc(m.name);
+const mid = (m) => "providers/" + enc(m.provider) + "/" + enc(m.name);
 const pid = (name) => "providers/" + enc(name);
 function provDot(p) {
   if (!p.enabled) return ["off", "switched off"];
@@ -896,7 +948,7 @@ function stateTag(s) { const d = jobDot(s); return chip(d === "run" ? "ac" : d =
 function sortedProviders() { return [...Z.S.providers].sort((a, b) => (b.keys > 0) - (a.keys > 0) || a.name.localeCompare(b.name)) }
 function treeModels() { const rp = Z.readyProviders(); return Z.S.models.filter((m) => (!MF.withKeys || rp.has(m.provider)) && (!MF.auto || m.auto)) }
 function mBadges(m, rp) {
-  return (m.kind === "typed" ? `<span class="tag" title="${esc(TYPED)}">typed</span>` : "") + (m.auto ? '<span class="tag ac" title="zswarm can pick it by itself: it has published test scores">AUTO</span>' : "") + (m.fallback ? '<span class="tag" title="Tried when the preferred route cannot serve">fallback</span>' : "") +
+  return (m.kind === "typed" ? `<span class="tag" title="${esc(TYPED)}">typed</span>` : "") + (m.auto ? '<span class="tag ac" title="ZergSwarm can pick it by itself: it has published test scores">AUTO</span>' : "") + (m.fallback ? '<span class="tag" title="Tried when the preferred route cannot serve">fallback</span>' : "") +
     (m.vision ? '<span class="tag">vision</span>' : "") + (m.custom ? '<span class="tag">custom</span>' : "") + (rp.has(m.provider) ? "" : chip("", "no key", { icon: "key", title: "Its provider has no ready key" }));
 }
 // The doctor's report as a checklist; the full JSON stays one click away.
@@ -957,19 +1009,17 @@ function nav(open, toDetail) {
 
 /* ---------- tree ---------- */
 function buildTree() {
-  const S = Z.S, provs = sortedProviders(), ms = treeModels(), rp = Z.readyProviders(), byP = new Map(), total = new Map();
-  // Every provider group is listed; the model filter only empties groups, so hidden models stay discoverable.
-  for (const m of S.models) { if (!byP.has(m.provider)) byP.set(m.provider, []); total.set(m.provider, (total.get(m.provider) || 0) + 1) }
-  for (const m of orderModels(ms)) byP.get(m.provider).push(m);
-  const pmap = new Map(S.providers.map((p) => [p.name, p]));
-  const groups = [...byP.keys()].sort((a, b) => rp.has(b) - rp.has(a) || a.localeCompare(b));
+  // A model is part of its provider (owner, 2026-09-26: "the models are just sub-items of providers"), so each
+  // provider opens onto its models; "All models" is the one page that compares them across providers.
+  const S = Z.S, provs = sortedProviders(), byP = new Map();
+  for (const m of orderModels(S.models)) { if (!byP.has(m.provider)) byP.set(m.provider, []); byP.get(m.provider).push(m) }
   const cl = CLIENTS || Object.keys(CLIENT_INFO).map((c) => ({ client: c, registered: null }));
   return [
     { id: "overview", label: "Overview", icon: "overview" },
-    { id: "providers", label: "Providers", icon: "provider", count: provs.length, kids: provs.map((p) => { const [d, t] = provDot(p); return { id: pid(p.name), label: p.name, av: p.name, dot: d, dotTitle: t, meta: p.keys ? `${p.ready}/${p.keys}` : "no key", dim: !p.enabled } }) },
-    { id: "models", label: "Models", icon: "model", count: ms.length === S.models.length ? ms.length : `${ms.length} of ${S.models.length}`, kids: groups.map((g) => { const p = pmap.get(g); const [d, t] = p ? provDot(p) : ["off", ""]; const list = byP.get(g), n = total.get(g);
-      return { id: "models/" + enc(g), label: g, av: g, dot: d, dotTitle: t, dim: !rp.has(g), meta: !rp.has(g) ? "no key" : list.length === n ? String(n) : `${list.length}/${n}`,
-        kids: list.map((m) => ({ id: mid(m), label: m.label || m.name, icon: "model", model: true, m: m.name, star: m.priority, auto: m.auto, off: m.switched_off, meta: m.switched_off ? "off" : "", dim: !m.enabled || m.switched_off, search: m.api_id })) } }) },
+    { id: "providers", label: "Providers", icon: "provider", count: provs.length, kids: provs.map((p) => { const [d, t] = provDot(p);
+      return { id: pid(p.name), label: p.name, av: p.name, dot: d, dotTitle: t, meta: p.keys ? `${p.ready}/${p.keys}` : "no key", dim: !p.enabled,
+        kids: (byP.get(p.name) || []).map((m) => ({ id: mid(m), label: m.label || m.name, icon: "model", model: true, m: m.name, star: m.priority, auto: m.auto, off: m.switched_off, meta: m.switched_off ? "off" : "", dim: !m.enabled || m.switched_off, search: m.api_id })) } }) },
+    { id: "models", label: "All models", icon: "model", count: S.models.length },
     { id: "routing", label: "Routing & roles", icon: "route" },
     { id: "clients", label: "Clients", icon: "plug", kids: cl.map((c) => ({ id: "clients/" + c.client, label: (CLIENT_INFO[c.client] || [c.client])[0], icon: "plug", dot: c.registered ? "ok" : "off", dotTitle: c.registered ? "registered" : c.registered === false ? "not registered" : "checking" })) },
     { id: "jobs", label: "Jobs", icon: "jobs", count: JOBS ? Math.min(JOBS.length, 25) : null, kids: (JOBS || []).slice(0, 25).map((j) => ({ id: "jobs/" + enc(j.job_id), label: j.label || j.job_id, icon: "jobs", dot: jobDot(j.state), dotTitle: j.state, meta: when(j.created).slice(5, 16), search: j.job_id })) },
@@ -1059,7 +1109,6 @@ function renderTree(scrollCur) {
   let nodes = buildTree(); if (q) nodes = filt(nodes, q);
   // Search looks at every model: hits the Models filter hides get one row that offers to show them.
   let hid = 0;
-  if (q) { const shown = new Set(treeModels().map((m) => m.name)); hid = Z.S.models.filter((m) => !shown.has(m.name) && (m.name + " " + (m.api_id || "")).toLowerCase().includes(q)).length }
   FLAT = []; flat(nodes, 0, null, FLAT, { left: 300 }, nodes.length + (hid ? 1 : 0));
   if (hid) FLAT.push({ id: "hidden:", sel: "models", n: { label: `${hid} more model${hid === 1 ? "" : "s"} hidden by the Models filter: show`, more: true, act: "mfAll" }, depth: 0, parent: null, pos: nodes.length + 1, size: nodes.length + 1 });
   if (!FLAT.some((r) => r.id === CUR)) CUR = FLAT.some((r) => r.id === SEL) ? SEL : FLAT[0] && FLAT[0].id;
@@ -1076,6 +1125,8 @@ function renderTree(scrollCur) {
 // o.expand: open the row's branch too. o.hist: "push" (default, so Back returns here), "replace" (the old page is gone),
 // "none" (boot and Back/Forward, where the URL is already right). o.focus: move focus to the new page's heading.
 function select(id, o = {}) {
+  // Addresses from before models sat under their provider (models/<provider>[/<model>]) still land on the page.
+  const old = /^models\/([^/]+)(\/.+)?$/.exec(id || ""); if (old) { id = "providers/" + old[1] + (old[2] || ""); o = { ...o, hist: "replace" } }
   SEL = id || "overview"; CUR = SEL;
   if ($("status").className === "bad") hideNote();
   const segs = SEL.split("/");
@@ -1090,7 +1141,7 @@ function select(id, o = {}) {
     if (root === "jobs") { loadJobs(); if (a) loadJob(a) }
     if ((root === "clients" || root === "overview") && !CLIENTS) loadClients();
     // The Overview's charts: loaded once, then refreshed in the background (the old bars held at half opacity) when older than a minute.
-    if ((root === "overview" || root === "jobs") && (!USAGE || USAGE.error || Date.now() - USAGE.at > 60000)) loadUsage();
+    if (/^(overview|jobs|providers\/)/.test(SEL) && (!USAGE || USAGE.error || Date.now() - USAGE.at > 60000)) loadUsage();
   }
   FX.sel = true;
   renderTree(true); renderDetail();
@@ -1190,8 +1241,8 @@ function detailHTML() {
   const s = SEL.split("/"), root = s[0], a = s[1] != null ? dec(s[1]) : null, b = s[2] != null ? dec(s[2]) : null;
   try {
     switch (root) {
-      case "providers": return a ? dProvider(a) : dProviders();
-      case "models": return b ? dModel(b) : a ? dGroup(a) : dModels();
+      case "providers": return b ? dModel(b) : a ? dProvider(a) : dProviders();
+      case "models": return dModels();
       case "routing": return dRouting();
       case "clients": return dClients(a);
       case "jobs": return a ? dJob(a) : dJobs();
@@ -1287,7 +1338,7 @@ function keysTable(name) {
     // Any key can take a number, wherever it is stored: the server keeps it by fingerprint.
     return head + `<tr class="${k.disabled ? "off" : ""}" data-k="${esc(fp)}">${many ? `<td data-l="Priority"><input id="${esc(id)}" class="mono in-pri" inputmode="numeric" autocomplete="off" placeholder="none" value="${esc(t ?? "")}" data-chg="keyPri"${da(o)} aria-label="${esc(`Priority number for key ${fp}`)}"${invalid(id)}>${ferr(id)}</td>` : ""}<td class="mono c1">${esc(k.masked)}</td><td class="mono" data-l="Fingerprint">${esc(fp)}</td><td class="${k.editable ? "muted" : "mono muted"}" style="font-size:11.5px" data-l="Source">${k.editable ? "added here" : esc(k.source)}</td><td data-l="State">${st}</td>
       <td data-l="On">${sw(!k.disabled, "keyOn", o, `Key ${fp} on`)}</td><td class="act">${btn("Check", "keyCheck", o, "", `aria-label="${esc(`Check key ${fp} with ${name}`)}" title="Ask ${esc(name)} whether it accepts this key (free)"`)}${k.editable ? btn("Remove", "keyRm", o, "x", `aria-label="${esc(`Remove key ${fp}`)}"`)
-        : `<span class="muted" style="font-size:12px" title="${esc(`Comes from ${k.source || "outside your provider file"}; change it there`)}">read-only</span>`}</td></tr>`;
+        : `<span class="muted" style="font-size:12px;margin-left:8px" title="${esc(`Comes from ${k.source || "outside your provider file"}; change it there`)}">read-only</span>`}</td></tr>`;
   }).join("")}</table>`) + (rows.length > lim ? `<div style="margin-top:6px">${btn(`Show all ${rows.length} keys`, "keysAll", { p: name })}</div>` : "");
 }
 function dProvider(name) {
@@ -1296,7 +1347,7 @@ function dProvider(name) {
   const o = { p: name };
   if (Array.isArray(KEYS[name]) && KSYNC[name] !== p.keys) { KSYNC[name] = p.keys; if (KEYS[name].length !== p.keys && !KLOAD.has(name)) queueMicrotask(() => reloadKeys(name)) }
   const nModels = Z.S.models.filter((m) => m.provider === name).length, env = (p.key_env || []).join(", ");
-  const getKey = p.key_url ? `<div class="hint" style="margin:0 0 8px">No key yet? ${xlink(`Get one from ${esc(name)}`, p.key_url)}${p.free_tier ? " (it has a free tier)" : ""}, then paste it here. It stays on this computer, and zswarm checks it with ${esc(name)} straight away.</div>` : "";
+  const getKey = p.key_url ? `<div class="hint" style="margin:0 0 8px">No key yet? ${xlink(`Get one from ${esc(name)}`, p.key_url)}${p.free_tier ? " (it has a free tier)" : ""}, then paste it here. It stays on this computer, and ZergSwarm checks it with ${esc(name)} straight away.</div>` : "";
   return page([["Providers", "providers"], [name]], name, { pic: av(name, true), lead: esc(p.about || ""),
     badges: `${provChip(p)}${p.free_tier ? chip("ok", "free tier") : ""}${p.builtin ? "" : '<span class="tag">custom</span>'}`,
     main: mainSw(p.enabled ? "Used" : "Not used", sw(p.enabled, "provEnabled", o, "Use this provider once it has a key; off keeps it out of every task")) },
@@ -1305,10 +1356,12 @@ function dProvider(name) {
       (p.keys ? provHealth(p) + tierFig(name) : prow("Keys", `<span class="muted">none yet: paste one below</span>`)) +
       (p.disabled_why && p.disabled_why.length ? prow("Why keys are off", p.disabled_why.map((w) => `<span class="nw">${esc(cnum(w.keys))} ${esc(w.reason)}</span>`).join('<span class="sep" aria-hidden="true"> · </span>'),
         "A key out of credit comes back when a balance probe sees a top-up; a key the provider refused (401/403) needs replacing.") : "") +
-      prow("Models", link(`${nModels} model${nModels === 1 ? "" : "s"}`, "models/" + enc(name))) +
       (p.website ? prow("Website", xlink(esc(p.website.replace(/^https?:\/\//, "")), p.website)) : "")) +
     sec("Keys", `<div class="row" style="margin:6px 0 8px"><input type="password" id="nk" data-keep autocomplete="off" class="grow in-l" placeholder="Paste a ${esc(name)} API key" data-enter="keyAdd"${da(o)} aria-label="New key">${btn(bi("add", "Add key"), "keyAdd", o, "p")}</div>${getKey}${keysTable(name)}`,
       p.keys ? btn(bi("spend", "Probe balance"), "probe", o, "", 'title="Check the balance (free)"') + btn(bi("refresh", "Reload"), "keysReload", o) : "") +
+    sec("Use", useFig("pu-" + hnum(name).toString(36), Z.S.models.filter((m) => m.provider === name).map((m) => m.name), chw(1)) + perModelFig("pm-" + hnum(name).toString(36), name, chw(1))) +
+    sec(`Models <span class="muted">(${nModels})</span>`, `<p class="hint" style="margin:0 0 6px">ZergSwarm picks among these by itself for each task, so there is nothing to choose here: leave them on. <b>AUTO</b> marks the ones with published test scores; the others step in when those are busy.</p>` +
+      priceNote() + modelTable(Z.S.models.filter((m) => m.provider === name), Z.readyProviders(), () => `<p class="muted">No models for ${esc(name)} yet. ${link("Add one", "new/model")}</p>`, true), orderSel()) +
     disc("provider", "Connection &amp; advanced", sec("Connection",
       prow("Base URL", `<input id="pv_url" class="mono w" value="${esc(p.base_url || "")}" data-chg="provBase"${da(o)}>`, "The part before /chat/completions. Saved when you leave the field.", "pv_url") +
       // Only http(s) becomes a link: esc() stops markup, not a javascript: URL.
@@ -1327,13 +1380,14 @@ function noMatch() {
   if (!why.length) return `<p class="muted">No models yet. ${link("Add one", "new/model")}</p>`;
   return `<p class="muted">No models match ${why.join(" and ")}. ${btn("Show every model", "mfAll")}</p>`;
 }
-function modelTable(list, rp, empty = noMatch) {
+// oneProv: the table sits on that provider's own page, so a Provider column would repeat its name on every row.
+function modelTable(list, rp, empty = noMatch, oneProv = false) {
   if (!list.length) return empty();
   const free = new Set(Z.S.providers.filter((p) => p.free_tier).map((p) => p.name));
   // A free-tier model says so first: "free tier" beside a bare price read as a contradiction to every visitor (SUE, 2026-09-26).
-  const cost = (m) => free.has(m.provider) && m.usd_per_1m != null ? `${chip("ok", "free tier", { title: "Nothing is charged until you pass the provider's free limits" })}<div class="muted sm">${price(m)} after that</div>` : price(m);
-  return tbl(`<table class="t cards"><tr><th>On</th><th title="Starred models are tried first by AUTO, lowest number first">Priority</th><th>Model</th><th>Provider</th><th>Kind</th><th class="r" title="${esc(PRICE_TIP)}">Price per 1M tokens</th><th class="r">Context</th></tr>${orderModels(list).slice(0, 300).map((m) =>
-    `<tr class="${m.enabled ? "" : "off"}"><td data-l="On">${sw(!m.switched_off, "modelOn", { m: m.name }, `Use model ${m.name}`)}</td><td data-l="Priority">${star(m)}</td><td class="c1">${link(m.label || m.name, mid(m))}${m.inherits ? `<div class="muted sm">runs ${esc(m.inherits)}${m.effort ? ` at ${esc(m.effort)} effort` : ""}, as it was tested</div>` : ""}</td><td data-l="Provider">${pname(m.provider)}</td><td data-l="Kind">${mBadges(m, rp)}</td><td class="r mono nw" data-l="Price per 1M tokens">${cost(m)}</td><td class="r mono" data-l="Context">${ctxk(m)}</td></tr>`).join("")}</table>`) + (list.length > 300 ? `<p class="muted">${list.length - 300} more: filter to narrow.</p>` : "");
+  const cost = (m) => free.has(m.provider) && m.usd_per_1m != null ? `${chip("ok", "free", { title: `Free tier: nothing is charged until you pass the provider's free limits, then ${price(m)} per 1M tokens` })}<span class="muted"> then ${price(m)}</span>` : price(m);
+  return tbl(`<table class="t cards"><tr><th>On</th><th title="Starred models are tried first by AUTO, lowest number first">Priority</th><th>Model</th>${oneProv ? "" : "<th>Provider</th>"}<th>Kind</th><th class="r" title="${esc(PRICE_TIP)}">Price per 1M tokens</th><th class="r">Context</th></tr>${orderModels(list).slice(0, 300).map((m) =>
+    `<tr class="${m.enabled ? "" : "off"}"><td data-l="On">${sw(!m.switched_off, "modelOn", { m: m.name }, `Use model ${m.name}`)}</td><td data-l="Priority">${star(m)}</td><td class="c1">${link(m.label || m.name, mid(m))}</td>${oneProv ? "" : `<td data-l="Provider">${pname(m.provider)}</td>`}<td data-l="Kind">${mBadges(m, rp)}</td><td class="r mono nw" data-l="Price per 1M tokens">${cost(m)}</td><td class="r mono" data-l="Context">${ctxk(m)}</td></tr>`).join("")}</table>`) + (list.length > 300 ? `<p class="muted">${list.length - 300} more: filter to narrow.</p>` : "");
 }
 // The ranking stays in view without a page of its own: the starred models, in the order AUTO tries them.
 function starStrip() {
@@ -1345,25 +1399,18 @@ function dModels() {
   const rp = Z.readyProviders(), q = MF.q.trim().toLowerCase();
   const list = treeModels().filter((m) => !q || m.name.toLowerCase().includes(q) || (m.label || "").toLowerCase().includes(q) || m.provider.toLowerCase().includes(q) || (m.api_id || "").toLowerCase().includes(q));
   const callout = rp.size ? "" : `<div class="callout">${ic("warning")}<div><b style="font-weight:500">Add a key to use these models.</b> No provider has a ready key yet, so none of them can run. ${link("Open Providers", "providers")}</div></div>`;
-  return page([["Models"]], "Models", { pic: pic("model"), lead: "When a task asks for <b>auto</b>, zswarm picks the cheapest model whose published test scores are good enough for that kind of task, and moves down the list if one fails. Star a model (★) to have it tried first. A model switched off is never used.", main: btn(bi("add", "Add model"), "sel", { id: "new/model" }, "p") },
+  return page([["All models"]], "All models", { pic: pic("model"), lead: "When a task asks for <b>auto</b>, ZergSwarm picks the cheapest model whose published test scores are good enough for that kind of task, and moves down the list if one fails. Star a model (★) to have it tried first. A model switched off is never used.", main: btn(bi("add", "Add model"), "sel", { id: "new/model" }, "p") },
     // Why AUTO picks what it picks, right under the ranking it follows; its table stays folded.
     callout + starStrip() + (rp.size ? scatterFig() : "") + sec("Filter", `<div class="row" style="margin:4px 0"><input id="mf_q" type="search" data-inp="mfQ" value="${esc(MF.q)}" placeholder="Filter by name, provider or id" class="in-m" aria-label="Filter models">
       <label class="row"><input type="checkbox" id="mf_with" data-chg="mfWith" ${MF.withKeys ? "checked" : ""}> only providers with a ready key</label>
       <label class="row" title="AUTO-ranked: has published benchmark scores, so AUTO can pick it"><input type="checkbox" id="mf_auto" data-chg="mfAuto" ${MF.auto ? "checked" : ""}> only AUTO-ranked</label><span class="muted grow cnt">${list.length} of ${Z.S.models.length}</span></div>
-      <div class="hint">The two checkboxes also filter the Models branch of the tree.</div>`) +
+`) +
     (rp.size ? (t) => sec("Models", t, orderSel()) : (t) => disc("allmodels", `Every model <span class="muted">(${list.length})</span>`, t))(priceNote() + modelTable(list.filter((m) => m.kind !== "typed"), rp)) + helpers(rp));
 }
 // Typed models (Jev) answer sub-questions for other tools and never run a task, so they sit apart from the rest.
 function helpers(rp) {
   const list = Z.S.models.filter((m) => m.kind === "typed");
   return list.length ? sec("Helpers for sub-questions", `<p class="hint" style="margin:0 0 8px">${esc(TYPED)}</p>${modelTable(list, rp)}`) : "";
-}
-function dGroup(prov) {
-  const p = Z.S.providers.find((x) => x.name === prov), rp = Z.readyProviders();
-  const list = Z.S.models.filter((m) => m.provider === prov);
-  return page([["Models", "models"], [prov]], prov, { pic: av(prov, true), badges: p ? provChip(p) : chip("", "unknown provider"), main: p ? link("Provider settings ›", pid(prov)) : "",
-    lead: "zswarm picks among these by itself for each task, so there is nothing to choose here: leave them on. <b>AUTO</b> marks the ones with published test scores; the others step in when those are busy." },
-    sec(`Models served by ${esc(prov)} (${list.length})`, priceNote() + modelTable(list, rp, () => `<p class="muted">No models for ${esc(prov)} yet. ${link("Add one", "new/model")}</p>`), orderSel()));
 }
 function dModel(name) {
   const S = Z.S, m = S.models.find((x) => x.name === name);
@@ -1379,11 +1426,11 @@ function dModel(name) {
   // What each badge in the heading means, for the badges this model carries.
   const why = [m.auto && "<b>AUTO</b>: has published benchmark scores, so AUTO can pick it.", m.fallback && "<b>fallback</b>: tried when the preferred route cannot serve.",
     m.vision && "<b>vision</b>: reads images.", m.custom && "<b>custom</b>: you added it.", !rp.has(m.provider) && "<b>no key</b>: its provider has no ready key."].filter(Boolean);
-  return page([["Models", "models"], [m.provider, "models/" + enc(m.provider)], [m.label || name]], m.label || name, { pic: pic("model"),
+  return page([["Providers", "providers"], [m.provider, pid(m.provider)], [m.label || name]], m.label || name, { pic: pic("model"),
     badges: mBadges(m, rp), main: mainSw(m.switched_off ? "Off" : "On", sw(!m.switched_off, "modelOn", o, "Switch this model on or off")) },
     sec("Use",
       prow("Priority", `${m.auto || m.priority ? star(m) : ""}<input id="mp_n" class="mono in-pri" inputmode="numeric" autocomplete="off" placeholder="none" value="${esc(m.priority ?? "")}" data-chg="modelPri"${da(o)}${invalid("mp_n")}>${ferr("mp_n")}`,
-        (m.auto ? "Starred models are tried first when zswarm picks by itself: 1 before 2. It still has to be good enough for the task." : `It is ${NOAUTO}, so a number has no effect.`) + " Leave it empty for no star.", "mp_n") +
+        (m.auto ? "Starred models are tried first when ZergSwarm picks by itself: 1 before 2. It still has to be good enough for the task." : `It is ${NOAUTO}, so a number has no effect.`) + " Leave it empty for no star.", "mp_n") +
       (m.usd_per_1m != null && m.kind !== "typed" ? prow("Cost", freeTier(m.provider) ? `${chip("ok", "free tier")} <span class="muted">nothing until you pass ${esc(m.provider)}'s free limits; then ${esc(perTask(m))}</span>` : `<span>${esc(perTask(m))}</span>`,
         "A token is about three quarters of a word; a small task here uses about 3,000 of them, a big one about 50,000.") : "") +
       prow("Usable now", m.enabled && rp.has(m.provider) ? chip("ok", "yes") : `${chip("", "no")} <span class="muted">${m.switched_off ? "switched off" : !m.enabled ? "provider off" : "no ready key"}</span>`) +
@@ -1392,8 +1439,10 @@ function dModel(name) {
       (m.kind === "typed" ? prow("Used by", "<span class=\"mono\">zswarm_decide</span>", TYPED)
         : prow("Live call", btn(bi("play", "Test"), "modelTest", o, "", (T && T.running) || !canRun ? "disabled" : ""),
         canRun ? "Sends one tiny prompt through this model. Costs a fraction of a cent." : `Add a key for ${esc(m.provider)} first: ${link(`open ${m.provider}`, pid(m.provider))}`) + test)) +
+    sec("Use", useFig("mu-" + hnum(name).toString(36), [name], chw(1))) +
     disc("model", "Details", sec("Properties",
       prow("Provider", `${pname(m.provider, pid(m.provider))} ${p ? provChip(p) : ""}`) +
+      (m.inherits ? prow("Runs", `<span class="mono">${esc(m.inherits)}</span>${m.effort ? ` at ${esc(m.effort)} effort` : ""}`, "The model and effort it was tested with, which is exactly how ZergSwarm runs it.") : "") +
       prow("Provider's model id", `<span class="mono">${esc(m.api_id || m.name)}</span>`) +
       prow("Name in a task", `<span class="mono">${esc(m.name)}</span>`, "Put this in a task's model, or pick it for a role, to use exactly this model instead of letting zswarm choose.") +
       prow("Context", `<span class="mono">${ctxk(m)}</span>${m.ctx ? ` <span class="muted mono">(${esc(m.ctx)} tokens)</span>` : ""}`) +
@@ -1414,9 +1463,9 @@ function dRouting() {
   const prev = !P ? "" : P.running ? '<p class="muted pending">asking the selector…</p>' : `<div id="pv_out">${P.error && !P.candidates ? `<p class="bad">${esc(P.error)}</p>` : (P.candidates && P.candidates.length)
     ? tbl(`<table class="t"><tr><th class="r">#</th><th>Model</th><th>Provider</th><th class="r" title="What the published test run cost on it: for comparing models, not your bill">Test-run cost</th></tr>${P.candidates.map((c, i) => `<tr><td class="r mono">${i + 1}</td><td>${esc(c.unevidenced ? c.model : lab(c.model))}${pri[c.model] ? ` <span class="tag ac" title="Starred: tried first, lowest number first">★${esc(pri[c.model])}</span>` : ""}${c.unevidenced ? ' <span class="muted sm">backup from the same provider, not tested itself</span>' : ""}</td><td>${pname(c.provider)}</td><td class="r mono">${Z.money(c.benchmark_cost_usd)}</td></tr>`).join("")}</table>`)
     : '<p class="muted">Nothing can run yet: add a key for a provider that has tested models.</p>'}${skipped.length ? `<p class="hint">${skipped.map((r) => `★${esc(pri[r.model])} ${esc(lab(r.model))} was skipped: ${esc(r.reason)}.`).join(" ")}</p>` : ""}</div>`;
-  return page([["Routing & roles"]], "Routing & roles", { pic: pic("route"), lead: "A <b>role</b> is a kind of work a task can ask for by name. Each is set to <b>auto</b> (zswarm picks the model) unless you choose one. Most people leave them all on auto." },
+  return page([["Routing & roles"]], "Routing & roles", { pic: pic("route"), lead: "A <b>role</b> is a kind of work a task can ask for by name. Each is set to <b>auto</b> (ZergSwarm picks the model) unless you choose one. Most people leave them all on auto." },
     sec("Spending limit", prow("Daily cap, $", `<input id="cap" class="mono in-pri" inputmode="decimal" autocomplete="off" placeholder="none" value="${esc(O.daily_cap_usd ?? "")}" data-chg="optCap" aria-label="Daily spending cap in dollars">`,
-      "Once today's spend reaches this, zswarm refuses new work until tomorrow; work already running finishes. Leave it empty for no cap. You pay each provider directly.", "cap")) +
+      "Once today's spend reaches this, ZergSwarm refuses new work until tomorrow; work already running finishes. Leave it empty for no cap. You pay each provider directly.", "cap")) +
     disc("roles", `Roles <span class="muted">· ${Object.values(S.roles).filter((v) => !v || v === "auto").length} of ${Object.keys(S.roles).length} on auto</span>`, sec("Roles", Object.entries(S.roles).map(([r, v]) => prow(`<span class="mono">${esc(r)}</span>`,
       `<select data-chg="role"${da({ r })} class="fit role" aria-label="Model for role ${esc(r)}"><option value="auto" ${v === "auto" ? "selected" : ""}>auto</option>${modelOpts(onM, v)}${v && v !== "auto" && !on.includes(v) ? `<option value="${esc(v)}" selected>${esc(v)} (off)</option>` : ""}</select>`, esc(ROLE_INFO[r] || ""))).join(""))) +
     sec("Preview AUTO", `<div class="row" style="margin:6px 0"><label class="row"><span class="muted">Task profile</span><select id="pv_prof" data-keep>${["general", "code", "decision", "research", "critical", "routine"].map((p) => `<option>${p}</option>`).join("")}</select></label>
@@ -1502,7 +1551,7 @@ function dHelp() {
       (free.length ? `<p>These have free tiers: ${free.map((p) => `${link(p.name, pid(p.name))} (${xlink("get a key", p.key_url)})`).join(", ")}.</p>` : "")) +
     q("What is a free tier?", "<p>A provider with a free tier lets you use some of its models without paying, up to a limit per minute or per day. Past the limit, requests wait until it resets. Nothing is charged unless you add a payment method with the provider. The prices shown here are what it charges past its free limits.</p>") +
     q("What is a token, and what does a task cost?", `<p>AI models read and write text in tokens; a token is about three quarters of a word. Prices are in dollars per million tokens.</p><p>A small task here uses about 3,000 tokens and a big one about 50,000, so at $0.40 per million a task costs a tenth of a cent to 2 cents. On a free tier it costs nothing within the limits.</p><p>You pay each provider directly; ZergSwarm itself is free. A daily spending limit is on ${link("Routing & roles", "routing")}.</p>`) +
-    q("Which model should I pick?", "<p>None: leave them on. For each task zswarm picks the cheapest model whose published test scores are good enough for that kind of work, and moves on to the next if it fails. The <b>AUTO</b> tag marks the models it ranks that way. A star (☆) puts a model first in that order; you never need one.</p>") +
+    q("Which model should I pick?", "<p>None: leave them on. For each task ZergSwarm picks the cheapest model whose published test scores are good enough for that kind of work, and moves on to the next if it fails. The <b>AUTO</b> tag marks the models it ranks that way. A star (☆) puts a model first in that order; you never need one.</p>") +
     q("What are roles?", `<p>A role is a kind of work a task can name, such as <i>code</i> or <i>summarize</i>. Each is set to auto, and most people leave them that way. They are on ${link("Routing & roles", "routing")}.</p>`) +
     q("How do I connect it to my assistant?", `<p>On ${link("Clients", "clients")}, press Install next to Claude Code, Claude Desktop or Codex, then open a new chat there.</p>`) +
     q("Where can I ask a question?", `<p>Open an issue on ${xlink("GitHub", ISSUES_URL)} (a free account). The ${xlink("full guide", HELP_URL)} covers everything here in more depth.</p>`) +
@@ -1521,7 +1570,7 @@ function dNewProvider() {
 }
 function dNewModel() {
   const provs = sortedProviders();
-  return page([["Models", "models"], ["Add model"]], "Add model", { pic: pic("add"), lead:"Any model a provider serves. It is reachable by name and by a role you point at it; AUTO ranks only models with published scores." },
+  return page([["All models", "models"], ["Add model"]], "Add model", { pic: pic("add"), lead:"Any model a provider serves. It is reachable by name and by a role you point at it; AUTO ranks only models with published scores." },
     sec("New model",
       prow("Name", `<input id="nm_name" data-keep placeholder="e.g. llama-4-70b" class="in-m">`, "Saved in lower case.", "nm_name") +
       prow("Provider", `<select id="nm_prov" data-keep class="fit">${provs.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("")}</select>`, "", "nm_prov") +
@@ -1596,14 +1645,16 @@ async function loadJob(id, quiet) {
 }
 // Spend and outcomes per day for the Overview. A reload holds the old bars (at half opacity) until the new numbers land;
 // a failure keeps the old numbers when there are some, and says so either way.
+// The pages that chart the usage data: the Overview, Jobs, and every provider and model page.
+const usesUsage = () => /^(overview|jobs|providers\/)/.test(SEL);
 async function loadUsage() {
   if (ULOAD) return; ULOAD = true;
   // Already on the Overview: show the held state now. Arriving there, select() renders it next.
-  if (USAGE && USAGE.days) { USAGE.stale = true; if ((SEL === "overview" || SEL === "jobs") && LASTSEL === SEL) renderDetail() }
+  if (USAGE && USAGE.days) { USAGE.stale = true; if (usesUsage() && LASTSEL === SEL) renderDetail() }
   try { USAGE = { days: (await Z.usage(14)) || [], at: Date.now() } }
   catch (e) { USAGE = USAGE && USAGE.days ? { ...USAGE, stale: false } : { error: e.message }; note("Usage: " + e.message, true) }
   finally { ULOAD = false }
-  if (SEL === "overview" || SEL === "jobs") renderDetail();
+  if (usesUsage()) renderDetail();
 }
 async function loadClients() {
   try { CLIENTS = await Z.clients(); CLIENTS_ERR = null } catch (e) { CLIENTS_ERR = e.message; note("Clients: " + e.message, true) }
@@ -1645,7 +1696,10 @@ const ACT = {
   navOpen: () => nav(true),
   navClose: () => nav(false),
   // A link or button in the detail pane moves focus to the new page's heading; the tree keeps its own focus.
-  sel: (d, el) => { const row = el.closest(".tn"); if (row) { CUR = row.dataset.row; select(d.id, { expand: row.getAttribute("aria-expanded") === "false" }) } else select(d.id, { focus: !el.closest("#tree") }); nav(false, true) },
+  sel: (d, el) => { const row = el.closest(".tn"); if (row) { CUR = row.dataset.row;
+      // A parent row toggles like its arrow: an open one closes (the page still opens), a closed one opens.
+      if (row.getAttribute("aria-expanded") === "true") { FX.tree = snapTree(row.dataset.row); EXP.delete(row.dataset.row); saveExp() }
+      select(d.id, { expand: row.getAttribute("aria-expanded") === "false" }) } else select(d.id, { focus: !el.closest("#tree") }); nav(false, true) },
   tog: (d) => { if (d.id === "models" && !EXPM) { EXPM = true; SV("expm", true) } FX.tree = snapTree(d.id); EXP.has(d.id) ? EXP.delete(d.id) : EXP.add(d.id); saveExp(); CUR = d.id; renderTree() },
   skip: () => { const h = $("dh"); if (h) h.focus() },
   undo: () => { const f = UNDO; hideNote(); if (f) return f() },
@@ -1688,8 +1742,8 @@ const ACT = {
     return setStar(d.m, n, `${d.m} starred ★${n}: AUTO tries it first when it qualifies`) },
   modelTest: async (d) => { TEST[d.m] = { running: true }; renderDetail();
     try { TEST[d.m] = await Z.testModel(d.m) } catch (e) { TEST[d.m] = { status: "error", error: e.message } }
-    if (SEL.startsWith("models/")) { FX.reveal = "test_out"; renderDetail() } note(`${d.m}: ${TEST[d.m].status === "ok" ? "test passed" : "test failed"}`, TEST[d.m].status !== "ok") },
-  modelRm: (d) => { if (confirm(`Remove model ${d.m}?`)) { const m = Z.S.models.find((x) => x.name === d.m), back = "models/" + enc(m ? m.provider : "");
+    if (SEL.startsWith("providers/") && SEL.split("/").length === 3) { FX.reveal = "test_out"; renderDetail() } note(`${d.m}: ${TEST[d.m].status === "ok" ? "test passed" : "test failed"}`, TEST[d.m].status !== "ok") },
+  modelRm: (d) => { if (confirm(`Remove model ${d.m}?`)) { const m = Z.S.models.find((x) => x.name === d.m), back = pid(m ? m.provider : "");
     return run(async () => { await Z.removeModel(d.m); select(back, { hist: "replace", focus: true }) }, "Model removed") } },
   doctor: () => once("doctor", async () => { DOCTOR = { running: true }; renderDetail();
     try { const r = await Z.doctor(); DOCTOR = r && r.error && Object.keys(r).length === 1 ? { error: r.error } : { data: r } } catch (e) { DOCTOR = { error: e.message } }
@@ -1723,7 +1777,7 @@ const ACT = {
   addModel: () => { const v = (id) => $(id).value.trim(), name = v("nm_name").toLowerCase(), provider = $("nm_prov").value;
     if (!name) return note("Give the model a name", true);
     return once("addModel", () => run(async () => { await Z.addModel({ name, provider, api_id: v("nm_api"), ctx: parseInt(v("nm_ctx"), 10) || 131072, price: { hit: v("nm_hit"), miss: v("nm_miss"), out: v("nm_out") }, vision: $("nm_vis").checked, tools: $("nm_tools").checked });
-      const id = "models/" + enc(provider) + "/" + enc(name); FLASH.add("tn-" + id); select(id, { focus: true }) }, `Model ${name} added`)) },
+      const id = "providers/" + enc(provider) + "/" + enc(name); FLASH.add("tn-" + id); select(id, { focus: true }) }, `Model ${name} added`)) },
 };
 const CHG = {
   optCap: (d, el) => { const v = el.value.trim().replace(/^\$/, "");

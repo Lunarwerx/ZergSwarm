@@ -9,7 +9,7 @@ import json
 import os
 import sys
 
-from . import clihelp, config
+from . import __version__, clihelp, config
 from .commands import COMMANDS
 from .install import cmd_install
 
@@ -22,6 +22,7 @@ PIPELINE_MODULE = {"filters": "outfilters", "review": "reviewverb"}
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="zswarm", description="ZergSwarm (zswarm): hand work to many cheap AI models at once, from Claude Code, Claude Desktop or Codex. zswarm ui opens the console.")
+    p.add_argument("--version", action="version", version=f"zswarm {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # The self-description (zswarm/clihelp.py): agents read commands, flags and effects here, not from prose.

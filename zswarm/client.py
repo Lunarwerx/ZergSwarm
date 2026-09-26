@@ -124,6 +124,12 @@ QUOTA_RESET_UTC_HOUR = 7
 # ZERO_QUOTA_REST_S, the shared key state takes the leg out of every plan on the machine until the keys wake.
 _ZERO_QUOTA_429 = re.compile(r'"quota_limit_value"\s*:\s*"0"')
 ZERO_QUOTA_REST_S = 1800.0
+
+
+def _zero_limit_header(headers) -> bool:
+    """The same zero quota said in a header: Mistral answers a key with no allowance at all with 429 and
+    x-ratelimit-limit-req-minute: 0 (three of three sampled keys, 2026-09-26), where a busy key names a real limit."""
+    return any(k.lower().startswith("x-ratelimit-limit-req") and str(v).strip() == "0" for k, v in headers.items())
 # A 413 that names the ACCOUNT's limit is that key's organisation being too small for the request, not the request
 # being too big for the model: groq answers "Request too large for model `qwen/qwen3.8-27b` in organization `org_...`
 # service tier `on_demand` on tokens per minute (TPM)", and the same request succeeded on keys of other orgs. Measured
@@ -943,7 +949,7 @@ class ChatClient:
             raise NoUsableKey(f"NoUsableKey: every {self.provider} key is out of credit ({r.text[:100]})")
         if r.status_code == 429 and _DAILY_QUOTA_429.search(r.text or ""):
             self.pool.rest(key, _until_quota_reset(), status=429)  # spent for today: no retry on it until the reset
-        elif r.status_code == 429 and _ZERO_QUOTA_429.search(r.text or ""):
+        elif r.status_code == 429 and (_ZERO_QUOTA_429.search(r.text or "") or _zero_limit_header(r.headers)):
             self.pool.rest(key, ZERO_QUOTA_REST_S, status=429)  # no quota where the call landed: waiting 20 s changes nothing
         elif r.status_code == 429:
             self.pool.rest(key, self._retry_after(r.headers.get("retry-after"), RATE_REST_S), status=429)
