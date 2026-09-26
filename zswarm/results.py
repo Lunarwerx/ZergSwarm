@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .job import Job
 from .receipts import unverified_ids
-from .spec import merge_taint
+from .spec import brief_selection, merge_taint
 
 CLEAN = "clean"  # the taint filter value that keeps only results with no taint letter at all
 
@@ -40,7 +40,7 @@ def _split(task_ids, results_by_id, ids: list[str] | None, status: str | None, a
         elif r.status == "pending":
             pending.append(t.id)
         elif taint_matches(r.taint, taint):
-            results.append(_compact(r.as_dict(max_answer_chars)))  # long answers are truncated with a hint, never silently cut
+            results.append(_compact(r.as_dict(max_answer_chars, brief=True)))  # long answers are truncated with a hint, never silently cut
     return results, running, pending
 
 
@@ -85,5 +85,7 @@ def results_from_disk(job_id: str, ids: list[str] | None, status: str | None, ma
     for r in res:
         if len(r.get("answer", "")) > max_answer_chars:
             r["answer"] = r["answer"][:max_answer_chars] + "... [truncated]"
+        if "selection" in r:
+            r["selection"] = brief_selection(r["selection"], r.get("error"))
         _compact(r, include_receipts)
     return _flag_unverified({"summary": d["summary"], "results": res})

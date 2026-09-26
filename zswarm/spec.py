@@ -592,13 +592,29 @@ class Result:
         if max_answer_chars and len(self.answer) > max_answer_chars:
             d["answer"] = self.answer[:max_answer_chars] + f"\n... [{len(self.answer) - max_answer_chars} more chars; fetch with zswarm_results]"
             d["answer_truncated"] = True
-        rejected = d["selection"].get("rejected")
-        if brief and rejected and not (self.error or "").startswith("NoCapableSwarmRoute"):
-            # The orchestrator reads every task's result: ~20 skipped routes each is tokens on every task of a batch.
-            # It gets {filter: [models]}; results.jsonl, the job file and zswarm_select keep the full reasons, and a
-            # NoCapableSwarmRoute result keeps them too, since there they ARE the answer.
-            by_filter: dict[str, list[str]] = {}
-            for r in rejected:
-                by_filter.setdefault(r.get("filter") or "?", []).append(r.get("model"))
-            d["selection"]["rejected"] = by_filter
+        if brief:
+            d["selection"] = brief_selection(d["selection"], self.error)
         return d
+
+
+def brief_selection(selection: dict | None, error: str | None = None) -> dict | None:
+    """AUTO's record as the orchestrator reads it on every task of a batch: skipped routes as {filter: [models]},
+    candidates as their model names, the pick as its model and configuration. The full record (every candidate's
+    scores, every rejection's reason) was ~5,000 tokens a task in a zswarm_run reply (measured 2026-09-26);
+    results.jsonl, the job file and zswarm_select keep it, and a NoCapableSwarmRoute result keeps it too, since
+    there it IS the answer."""
+    if not isinstance(selection, dict) or (error or "").startswith("NoCapableSwarmRoute"):
+        return selection
+    out = dict(selection)
+    rejected = out.get("rejected")
+    if isinstance(rejected, list) and rejected:
+        by_filter: dict[str, list[str]] = {}
+        for r in rejected:
+            by_filter.setdefault(r.get("filter") or "?", []).append(r.get("model"))
+        out["rejected"] = by_filter
+    if isinstance(out.get("candidates"), list):
+        out["candidates"] = [c.get("model") if isinstance(c, dict) else c for c in out["candidates"]]
+    pick = out.get("selected")
+    if isinstance(pick, dict):
+        out["selected"] = {k: pick[k] for k in ("model", "configuration", "provider", "reasoning_effort") if k in pick}
+    return out

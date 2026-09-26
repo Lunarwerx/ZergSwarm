@@ -46,3 +46,11 @@ def test_write_staging_write_once_and_secret_guard(tmp_path):
     w[0].write_text("EDITED", encoding="utf-8")
     assert write_staging(tmp_path, session, facts) == []
     assert w[0].read_text(encoding="utf-8") == "EDITED"
+
+
+def test_write_staging_keeps_two_facts_whose_names_slug_alike(tmp_path):
+    # Regression (a zswarm review, 2026-09-26): the write-once guard dropped the second as an "earlier copy".
+    session = {"session_id": "abc123", "date": "2026-09-14"}
+    facts = [{"name": n, "description": d, "body": "b", "evidence": "e"} for n, d in (("Fix: CI!", "one"), ("fix ci", "two"))]
+    w = write_staging(tmp_path, session, facts)
+    assert [p.name for p in w] == ["2026-09-14-fix-ci.md", "2026-09-14-fix-ci-2.md"]

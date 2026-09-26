@@ -154,7 +154,8 @@ def record(sink: str, payload: bytes, provider: str = "", model: str = "") -> di
 
 
 def verify(path: Path | None = None) -> dict:
-    """Recompute the chain. {ok, lines, broken_at (1-based line), reason}; a missing ledger is ok with 0 lines."""
+    """Recompute the chain. {ok, lines, path}, plus broken_at (1-based line) and reason when not ok; a missing
+    ledger is ok with 0 lines."""
     p = path or ledger_path()
     if not p.exists():
         return {"ok": True, "lines": 0, "path": str(p)}

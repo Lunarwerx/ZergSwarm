@@ -70,6 +70,19 @@ def test_source_code_identifiers_are_not_secrets():
     assert r.apply(code) == code
 
 
+def test_a_subscripted_secret_is_caught_like_a_plain_one():
+    # Regression (a zswarm review of this file, 2026-09-26): conf["password"] = "..." leaked, password = "..." did not.
+    value = "0123" + "45678901"
+    text = f'conf["password"] = "{value}"\nsettings[\'api_key\']: {value}\n'
+    assert value not in Redactor("redact").apply(text)
+
+
+def test_a_pattern_named_like_a_built_in_is_refused():
+    # Regression: it was stored under the built-in's key and REPLACED it, so real keys went out unredacted.
+    with pytest.raises(ValueError, match="built-in"):
+        Redactor(patterns={"secret": r"MYCO-\d+"})
+
+
 def test_env_and_config_style_secret_names_are_caught():
     # `\b` before the name missed these: `_` is a word character, so DB_PASSWORD= never matched.
     r = Redactor("redact", detectors=["secret"])

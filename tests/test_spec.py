@@ -56,3 +56,17 @@ def test_result_truncation():
     d = r.as_dict(10)
     assert d["answer"].startswith("xxxxxxxxxx") and d["answer_truncated"] is True
     assert "answer_truncated" not in r.as_dict(1000)
+
+
+def test_a_batch_result_carries_autos_pick_not_its_whole_record():
+    # Regression (2026-09-26): the batch path never asked for the brief form, so every zswarm_run task carried every
+    # candidate's scores and every rejection's reason, about 5,000 tokens a task in the calling agent's context.
+    from types import SimpleNamespace
+
+    from zswarm.results import _split
+    sel = {"profile": "code", "candidates": [{"model": "a", "scores": {"x": 1}}],
+           "rejected": [{"model": "b", "filter": "usable", "reason": "no key"}],
+           "selected": {"model": "a", "configuration": "A (high)", "scores": {"x": 1}, "rates": {"hit": 1}}}
+    results, _, _ = _split([SimpleNamespace(id="t1")], {"t1": Result(id="t1", status="ok", selection=sel)}, None, None, {}, 1000)
+    assert results[0]["selection"] == {"profile": "code", "candidates": ["a"], "rejected": {"usable": ["b"]},
+                                       "selected": {"model": "a", "configuration": "A (high)"}}

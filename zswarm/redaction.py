@@ -46,7 +46,8 @@ _SECRET_RES = [
     # An assignment's value must carry a digit: `token = get_token_from_env` in source code is not a secret.
     # No `\b` before the name: `_` is a word character, so `\b` would miss DB_PASSWORD=, client_secret: and
     # GITHUB_TOKEN=, the commonest .env/config shapes; any non-alphanumeric (or the start) may precede it.
-    re.compile(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret(?:[_-]?key)?|password|passwd|token)[\"']?\s*[:=]\s*[\"']?(?P<v>(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{12,})"),
+    # `\]?` lets a subscript through: conf["password"] = "..." leaked while password = "..." was caught.
+    re.compile(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret(?:[_-]?key)?|password|passwd|token)[\"']?\]?\s*[:=]\s*[\"']?(?P<v>(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{12,})"),
 ]
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _CARD_RE = re.compile(r"(?<![\d-])\d(?:[ -]?\d){12,18}(?![\d-])")
@@ -152,6 +153,9 @@ class Redactor:
         if patterns is not None and not isinstance(patterns, dict):
             raise ValueError("redact patterns must be an object of {name: regex}")
         for name, rx in (patterns or {}).items():
+            if name in DETECTORS:
+                # Stored under the same key it would REPLACE the built-in, so a pattern named "secret" sent real keys out.
+                raise ValueError(f"redact pattern {name!r} has a built-in detector's name and would replace it; give it its own name")
             try:
                 compiled = re.compile(rx)
             except re.error as e:

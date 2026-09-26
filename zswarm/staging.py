@@ -36,11 +36,17 @@ def _staging_doc(session: dict, name: str, f: dict) -> str:
 def write_staging(out_dir: Path, session: dict, facts: list[dict]) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
+    named: set[str] = set()
     for f in facts:
         _, leaks = redact(f"{f.get('description', '')}\n{f.get('body', '')}\n{f.get('evidence', '')}")
         if leaks:
             continue  # secret-shaped content never lands, even post-redaction
-        name = _slug(str(f.get("name") or f.get("description") or "fact"))
+        name = stem = _slug(str(f.get("name") or f.get("description") or "fact"))
+        for n in range(2, len(facts) + 2):
+            if name not in named:
+                break
+            name = f"{stem}-{n}"  # two facts of THIS call slug alike: the second is its own fact, not an earlier copy
+        named.add(name)
         p = out_dir / f"{session['date']}-{name}.md"
         if p.exists():
             continue  # write-once: a human may have edited the earlier copy
