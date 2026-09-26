@@ -35,7 +35,7 @@ include = ["zswarm*"]
 # them (outfilters.py, shellpolicy.py), and the review roster is markdown the `review` verb reads at run time;
 # a non-editable install must carry them all.
 [tool.setuptools.package-data]
-zswarm = ["data/*.json", "data/*.md", "outfilters.toml", "shell_rules.toml", "reviewers/*.md", "providers/*.toml", "ui/*.html", "ui/*.js"]
+zswarm = ["data/*.json", "data/*.md", "outfilters.toml", "shell_rules.toml", "reviewers/*.md", "providers/*.toml", "ui/*.html", "ui/*.js", "ui/*.svg"]
 
 [tool.pytest.ini_options]
 # ⛔ testpaths IS LOAD-BEARING, not tidiness. `bench/out/` is this repo's benchmark OUTPUT

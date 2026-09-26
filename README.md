@@ -1,11 +1,15 @@
 <div align="center">
 
-<a href="https://github.com/Lunarwerx/ZergSwarm">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/console-provider-dark.png">
-    <img src="docs/img/console-provider-light.png" alt="The ZergSwarm console: a provider's keys, its use over two weeks, and its models with their prices" width="880">
-  </picture>
-</a>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.svg">
+  <img src="docs/img/logo-light.svg" alt="ZergSwarm" width="420">
+</picture>
+
+<br/>
+<br/>
+
+<strong>Hand your coding agent a swarm.</strong><br/>
+Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI models at once, and get the answers back as data.
 
 <br/>
 <br/>
@@ -17,8 +21,15 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-2563eb?style=flat-square&labelColor=0a0e17)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join_the_community-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=0a0e17)](https://discord.gg/PsWpeNUzhk)
 
-<strong>Hand your coding agent a swarm.</strong><br/>
-Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI models at once, and get the answers back as data.
+<br/>
+<br/>
+
+<a href="https://github.com/Lunarwerx/ZergSwarm">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/console-provider-dark.png">
+    <img src="docs/img/console-provider-light.png" alt="The ZergSwarm console: a provider's keys, its use over two weeks, and its models with their prices" width="880">
+  </picture>
+</a>
 
 </div>
 

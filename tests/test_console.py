@@ -30,6 +30,9 @@ def test_the_api_answers_only_this_machine_with_the_token(monkeypatch):
     assert ok.status_code == 200 and "providers" in ok.json()
     bare = client.get("/ui")  # with sign-in on, a bare request gets no token until a browser signs in
     assert bare.status_code == 401 and console.token() not in bare.text
+    icon = client.get("/ui/icon.svg")  # the tab icon: fetched with no token, shipped in the package, never a script
+    assert icon.status_code == 200 and icon.headers["content-type"].startswith("image/svg+xml")
+    assert "sandbox" in icon.headers["content-security-policy"] and "<svg" in icon.text
     assert client.get("/ui?t=wrong").status_code == 401
     page = client.get(f"/ui?t={console.token()}")  # the link `zswarm ui` opens: a session cookie, then the bare /ui
     assert page.status_code == 200 and str(page.url).endswith("/ui")

@@ -28,6 +28,7 @@ from .shared import local_host  # the Host check every custom route shares
 
 MAX_BODY = 1_000_000
 SIGN_IN_PAGE = ("<!doctype html><meta charset=utf-8><title>zswarm</title>"
+                "<link rel=icon href=/ui/icon.svg type=image/svg+xml>"
                 "<body style=\"font:15px system-ui,sans-serif;color:#111827;margin:3rem\">"
                 "<p>This browser is not signed in to the zswarm console.</p>"
                 "<p>Run <code>zswarm ui</code>: it opens a one-time sign-in link.</p>")
@@ -307,6 +308,16 @@ class _Routes:
         return self.refused(request) or Response(files("zswarm").joinpath("ui", "core.js").read_text(encoding="utf-8"),
                                                  media_type="text/javascript", headers=HEADERS)
 
+    async def icon(self, request):
+        # The console's own tab icon (ui/icon.svg: charcoal, white in a dark theme). A browser fetches it with no
+        # token, before any sign-in; the same policy as a provider icon keeps the SVG from running script.
+        from starlette.responses import Response
+
+        return self.refused(request) or Response(files("zswarm").joinpath("ui", "icon.svg").read_bytes(),
+                                                 media_type="image/svg+xml", headers={
+                                                     **HEADERS, "Cache-Control": "max-age=86400",
+                                                     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
+
     async def favicon(self, request):
         # An <img> cannot send the token header; an icon is public anyway. The policy header keeps an SVG icon from
         # running script if someone opens it as a page.
@@ -373,10 +384,10 @@ class _Routes:
 
 
 def mount(mcp, port: int) -> None:
-    """Register /, /ui, /ui/core.js and /api/* on the shared server's Starlette app (MCPServer.custom_route)."""
+    """Register /, /ui, /ui/core.js, /ui/icon.svg and /api/* on the shared server's Starlette app (MCPServer.custom_route)."""
     r = _Routes(port)
     for path, methods, handler in (("/", ["GET"], r.root), ("/ui/core.js", ["GET"], r.core), ("/ui", ["GET"], r.ui),
-                                   ("/ui/favicon/{name}", ["GET"], r.favicon),
+                                   ("/ui/icon.svg", ["GET"], r.icon), ("/ui/favicon/{name}", ["GET"], r.favicon),
                                    ("/api/{path:path}", ["GET", "POST"], r.api)):
         mcp.custom_route(path, methods=methods, include_in_schema=False)(handler)
 
