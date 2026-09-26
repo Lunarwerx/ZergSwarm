@@ -1,6 +1,6 @@
 [project]
 name = "zergswarm"
-version = "0.2.0"  # keep equal to zswarm/__init__.py __version__: the release workflow refuses a tag where they differ
+version = "0.2.1"  # keep equal to zswarm/__init__.py __version__: the release workflow refuses a tag where they differ
 description = "ZergSwarm (zswarm): give your coding agent a swarm of cheap LLM workers. MCP server, CLI and web console for Claude Code, Claude Desktop and Codex."
 requires-python = ">=3.11"
 dependencies = ["httpx>=0.28.1", "jsonschema>=4.23", "mcp>=2.2.0", "tomlkit>=0.13"]
