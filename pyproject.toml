@@ -1,6 +1,6 @@
 [project]
 name = "zergswarm"
-version = "1.0.1"  # keep equal to zswarm/__init__.py __version__: the release workflow refuses a tag where they differ
+version = "1.0.2"  # keep equal to zswarm/__init__.py __version__: the release workflow refuses a tag where they differ
 description = "ZergSwarm (zswarm): give your coding agent a swarm of cheap LLM workers. MCP server, CLI and web console for Claude Code, Claude Desktop and Codex."
 requires-python = ">=3.11"
 dependencies = ["httpx>=0.28.1", "jsonschema>=4.23", "mcp>=2.2.0", "tomlkit>=0.13"]
@@ -9,15 +9,12 @@ readme = "README.md"
 license = {text = "MIT"}
 
 [project.urls]
-Homepage = "https://github.com/Lunarwerx/ZergSwarm"
+Homepage = "https://zergswarm.lunarwerx.com/"
+Source = "https://github.com/Lunarwerx/ZergSwarm"
 Issues = "https://github.com/Lunarwerx/ZergSwarm/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "pytest-timeout>=2.3"]
-
-[project.urls]
-Homepage = "https://zergswarm.lunarwerx.com/"
-Source = "https://github.com/Lunarwerx/ZergSwarm"
 
 [project.scripts]
 zswarm = "zswarm.cli:main"
