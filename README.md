@@ -14,12 +14,12 @@ Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI mo
 <br/>
 <br/>
 
-[![website](https://img.shields.io/badge/website-zergswarm.lunarwerx.com-2563eb?style=flat-square&labelColor=0a0e17)](https://zergswarm.lunarwerx.com)
-[![release](https://img.shields.io/github/v/release/Lunarwerx/ZergSwarm?style=flat-square&label=release&color=2563eb&labelColor=0a0e17)](https://github.com/Lunarwerx/ZergSwarm/releases/latest)
+[![website](https://img.shields.io/badge/website-zergswarm.lunarwerx.com-2B3138?style=flat-square&labelColor=0a0e17)](https://zergswarm.lunarwerx.com)
+[![release](https://img.shields.io/github/v/release/Lunarwerx/ZergSwarm?style=flat-square&label=release&color=2B3138&labelColor=0a0e17)](https://github.com/Lunarwerx/ZergSwarm/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Lunarwerx/ZergSwarm/ci.yml?branch=main&style=flat-square&label=CI&labelColor=0a0e17)](https://github.com/Lunarwerx/ZergSwarm/actions/workflows/ci.yml)
-[![python](https://img.shields.io/badge/python-3.11%2B-2563eb?style=flat-square&logo=python&logoColor=white&labelColor=0a0e17)](https://www.python.org/downloads/)
-[![MCP server](https://img.shields.io/badge/MCP-server-2563eb?style=flat-square&labelColor=0a0e17)](https://modelcontextprotocol.io)
-[![license MIT](https://img.shields.io/badge/license-MIT-2563eb?style=flat-square&labelColor=0a0e17)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.11%2B-2B3138?style=flat-square&logo=python&logoColor=white&labelColor=0a0e17)](https://www.python.org/downloads/)
+[![MCP server](https://img.shields.io/badge/MCP-server-2B3138?style=flat-square&labelColor=0a0e17)](https://modelcontextprotocol.io)
+[![license MIT](https://img.shields.io/badge/license-MIT-2B3138?style=flat-square&labelColor=0a0e17)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join_the_community-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=0a0e17)](https://discord.gg/PsWpeNUzhk)
 
 <br/>
