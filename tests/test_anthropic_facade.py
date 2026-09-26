@@ -149,7 +149,6 @@ async def test_a_cc_task_on_a_free_leg_runs_through_a_facade_that_lives_only_for
             seen["live"] = (await client.get(env["ANTHROPIC_BASE_URL"] + "/nope")).json()["type"]
         return 0, json.dumps({"type": "result", "result": "done", "num_turns": 1, "usage": {}}), ""
 
-    monkeypatch.setattr(cc, "claude_bin", lambda: "claude")
     monkeypatch.setattr(cc, "run_hidden", fake_claude)
     res, _ = await cc.run_cc_task(task, "g-key")
     assert res.status == "ok" and seen["url"].startswith("http://127.0.0.1:") and seen["live"] == "error"

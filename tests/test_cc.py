@@ -26,7 +26,6 @@ def test_an_edit_task_with_no_system_gets_the_ladder_brief_on_both_backends(tmp_
     # "" opts out, and a read task is left alone.
     from zswarm.code_brief import CODE_BRIEF
     from zswarm.worker import build_messages
-    monkeypatch.setattr(cc, "claude_bin", lambda: "claude")
 
     def cc_system(**kw):
         cmd = cc._command(_task(tmp_path, **kw))
@@ -189,7 +188,6 @@ def test_a_lean_cc_worker_skips_the_projects_own_settings_and_memory(tmp_path, m
     # Measured 2026-09-24 against a local probe endpoint from the Connections checkout: the first request was
     # 138.7k chars with AGENTS.md in it; with --setting-sources user it was 84.6k, AGENTS.md gone, the worker's
     # own CLAUDE.md and the user-level shield hook kept. --bare (6.5k) was rejected: it drops both of those.
-    monkeypatch.setattr(cc, "claude_bin", lambda: "claude")
     lean = cc._command(_task(tmp_path, lean=True))
     assert lean[lean.index("--setting-sources") + 1] == "user" and "--bare" not in lean
     assert "--setting-sources" not in cc._command(_task(tmp_path))
@@ -198,7 +196,6 @@ def test_a_lean_cc_worker_skips_the_projects_own_settings_and_memory(tmp_path, m
 def test_a_cc_worker_is_not_handed_a_budget_claude_code_prices_at_anthropic_rates(tmp_path, monkeypatch):
     # 2026-09-25, job 20260925-053205-45c1: Claude Code billed a DeepSeek turn at ~63x its real cost, so a
     # --max-budget-usd of the task's 0.25 stopped 4 of 4 full-context Connections workers after 2 turns.
-    monkeypatch.setattr(cc, "claude_bin", lambda: "claude")
     assert "--max-budget-usd" not in cc._command(_task(tmp_path, max_cost_usd=0.25))
 
 

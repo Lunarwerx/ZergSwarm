@@ -40,6 +40,8 @@ def _isolated_home(tmp_path, monkeypatch, request):
         for provider in config.PROVIDERS.values():
             for env in provider.get("key_env", ()):
                 monkeypatch.delenv(env, raising=False)
+        # A unit test never starts the real Claude Code, and a CI runner has none: `claude` is the replay mock.
+        monkeypatch.setenv("ZSWARM_CLAUDE_BIN", str(MOCK_CLAUDE))
     from zswarm import keys as _keys
 
     monkeypatch.setattr(_keys, "_POOLS", {})

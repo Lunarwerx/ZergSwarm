@@ -105,7 +105,6 @@ def test_an_api_workers_bash_hands_its_own_envelope_on_and_never_the_servers(tmp
 def test_a_cc_task_given_read_tools_as_a_list_runs_read_only(tmp_path, monkeypatch):
     # A narrowed envelope leaves a task a LIST of tool names; the preset-name check gave that list full tools, shell included.
     monkeypatch.setattr(config, "CC_CONFIG_DIR", tmp_path / "claude-config")
-    monkeypatch.setattr("zswarm.cc.claude_bin", lambda: "claude")
     t = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "backend": "cc", "tools": ["read_file", "grep"]}, {}, 0)
     cmd = _command(t)
     assert cmd[cmd.index("--disallowedTools") + 1] == READ_ONLY_DISALLOWED

@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,7 +26,7 @@ jobs:
           test "$want" = "$have" || { echo "tag $GITHUB_REF_NAME but zswarm/__init__.py says $have"; exit 1; }
           test "$want" = "$pkg" || { echo "tag $GITHUB_REF_NAME but pyproject.toml says $pkg"; exit 1; }
       - run: python -m pip install -e ".[test]" build
-      - run: python -m pytest -q
+      - run: python -m pytest -q --timeout 120
       - run: python -m build
       - uses: actions/upload-artifact@v4
         with:
@@ -59,6 +60,7 @@ jobs:
   release:
     needs: wheel-works
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:

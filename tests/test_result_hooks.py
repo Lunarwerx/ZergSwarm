@@ -92,7 +92,6 @@ def test_a_valid_file_left_from_an_earlier_run_is_not_this_runs_answer(tmp_path)
 
 
 def test_a_cc_result_file_task_is_wired_to_the_hooks_and_published_from_the_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(cc, "claude_bin", lambda: "claude")
     task = Task.from_dict({"prompt": "review", "cwd": str(tmp_path), "backend": "cc", "tools": "read", "schema": SCHEMA, "result_file": "out/result.json"}, {}, 0)
     hook_dir = cc._hook_dir(task)
     try:
