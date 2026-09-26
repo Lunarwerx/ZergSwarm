@@ -15,6 +15,10 @@ Issues = "https://github.com/Lunarwerx/ZergSwarm/issues"
 [project.optional-dependencies]
 test = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "pytest-timeout>=2.3"]
 
+[project.urls]
+Homepage = "https://zergswarm.lunarwerx.com/"
+Source = "https://github.com/Lunarwerx/ZergSwarm"
+
 [project.scripts]
 zswarm = "zswarm.cli:main"
 

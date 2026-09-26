@@ -14,6 +14,7 @@ Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI mo
 <br/>
 <br/>
 
+[![website](https://img.shields.io/badge/website-zergswarm.lunarwerx.com-2563eb?style=flat-square&labelColor=0a0e17)](https://zergswarm.lunarwerx.com)
 [![release](https://img.shields.io/github/v/release/Lunarwerx/ZergSwarm?style=flat-square&label=release&color=2563eb&labelColor=0a0e17)](https://github.com/Lunarwerx/ZergSwarm/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Lunarwerx/ZergSwarm/ci.yml?branch=main&style=flat-square&label=CI&labelColor=0a0e17)](https://github.com/Lunarwerx/ZergSwarm/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-2563eb?style=flat-square&logo=python&logoColor=white&labelColor=0a0e17)](https://www.python.org/downloads/)
@@ -278,7 +279,7 @@ To the provider serving each task, and nowhere else. The console and the ledger 
 
 [MIT](LICENSE) © [LunarWerx](https://github.com/LunarWerxs)
 
-Made by [LunarWerx Studios](https://lunarwerx.com). Check out sibling projects [AgentHydra](https://agenthydra.lunarwerx.com), [RepoYeti](https://repoyeti.com), [SageThumbs](https://sagethumbs.lunarwerx.com), and [QuickDictate](https://quickdictate.lunarwerx.com).
+Website: [zergswarm.lunarwerx.com](https://zergswarm.lunarwerx.com). Made by [LunarWerx Studios](https://lunarwerx.com). Check out sibling projects [AgentHydra](https://agenthydra.lunarwerx.com), [RepoYeti](https://repoyeti.com), [SageThumbs](https://sagethumbs.lunarwerx.com), and [QuickDictate](https://quickdictate.lunarwerx.com).
 
 <div align="center">
 <br/>
