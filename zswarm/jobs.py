@@ -544,10 +544,21 @@ class JobManager:
             res.error = too_large_for_route([(d.model, d.error or "") for d in dead] + [(res.model, res.error)], tool_free=True)
         return res
 
+    async def ask_role(self, role: str, prompt: str, **kw) -> Result:
+        """One tool-free call for a role (judge, doubt, ...). A role left on AUTO runs its profile's plan over the
+        providers this machine has a key for, failing over across them (dispatch.ask_selected), like zswarm_ask; a
+        role wired to a model in settings.toml runs that model's route."""
+        from .selection import profile_for
+
+        r = role.strip().lower()
+        if config.ROLES.get(r) == config.AUTO:
+            return await self.ask_routed(prompt, config.AUTO, profile=profile_for(r, "none"), **kw)
+        return await self.ask_routed(prompt, config.resolve_role(r), **kw)
+
     async def _judge(self, prompt: str, system: str) -> Result:
-        """A verify task's judge: one tool-free call on the `judge` role's route, returning the typed verdict in
-        `data`. Its spend is folded into the task's result, so it is ledgered once, with the task."""
-        return await self.ask_routed(prompt, config.resolve_role("judge"), system=system, schema=verify.VERDICT_SCHEMA)
+        """A verify task's judge: one tool-free call for the `judge` role, returning the typed verdict in `data`. Its
+        spend is folded into the task's result, so it is ledgered once, with the task."""
+        return await self.ask_role("judge", prompt, system=system, schema=verify.VERDICT_SCHEMA)
 
     @staticmethod
     def _no_vision_leg(model: str, legs: list[str], n_images: int) -> str:
@@ -557,7 +568,8 @@ class JobManager:
         why = (f"its seeing legs {seeing} have no credit right now" if seeing
                else f"{config.resolve_model(model)} cannot see and nothing on its route can")
         return (f"NoVisionLeg: {n_images} image(s) not sent - {why}; the legs left {legs} are text-only and would guess. "
-                f"Name a model with eyes (vision: true in the registry, e.g. {config.DEFAULT_MODEL_VISION}) or wait for its pool.")
+                "Name a model with eyes (vision = true in its provider file; zswarm_select with vision=true lists the ones "
+                "this machine's keys reach) or wait for its pool.")
 
     async def _run_legs(self, job: Job, task: Task, warm: asyncio.Event | None, is_pilot: bool) -> tuple[Result, object]:
         """Run a task on its route; when a pinned route runs out of legs that can serve, go on by its profile

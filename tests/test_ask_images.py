@@ -91,6 +91,5 @@ def test_a_non_image_or_a_missing_file_is_refused_by_name(tmp_path):
         image_part(str(tmp_path / "gone.png"))
 
 
-def test_the_vision_role_and_default_name_a_model_with_eyes():
+def test_the_vision_role_names_a_model_with_eyes():
     assert config.sees(config.resolve_role("vision"))
-    assert config.provider_of(config.resolve_model(config.DEFAULT_MODEL_VISION)) == "gemini"

@@ -1265,10 +1265,11 @@ function dOverview() {
   const ready = S.providers.reduce((a, p) => a + (p.enabled ? p.ready : 0), 0), total = S.providers.reduce((a, p) => a + p.keys, 0);
   const auto = S.models.filter((m) => m.auto && m.enabled && rp.has(m.provider)).length;
   const reg = CLIENTS ? CLIENTS.some((c) => c.registered) : null;
+  const pickDesc = live > 0 && auto === 0 ? "Your keys reach no model with published test scores, so ZergSwarm cannot pick one by itself yet. Add a key for one of: " + S.providers.filter((p) => S.models.some((m) => m.provider === p.name && m.auto)).sort((a, b) => b.free_tier - a.free_tier || a.name.localeCompare(b.name)).map((p) => esc(p.name)).join(", ") + "." : "It picks, for each task, the cheapest model that scored well enough on published tests. A provider's models join in once it has a key.";
   // Each step's button takes its class: the first step still to do is the page's one primary action.
   const steps = [
     [live > 0, "Add an API key", "An API key is a code, like a password, that lets you use a provider's models. Get one on the provider's site and paste it here; it stays on this computer.", (c) => btn(bi("key", "Add a key"), "sel", { id: "providers" }, c)],
-    [auto > 0, "Let ZergSwarm pick the models", "It picks, for each task, the cheapest model that scored well enough on published tests. A provider's models join in once it has a key.", (c) => btn(bi("model", "See the models"), "pickModel", {}, c)],
+    [auto > 0, "Let ZergSwarm pick the models", pickDesc, (c) => btn(bi("model", "See the models"), "pickModel", {}, c)],
     [reg, "Connect your assistant", "Tell Claude Code, Claude Desktop or Codex that ZergSwarm is here, in one click.", (c) => btn(bi("plug", "Connect Claude Code"), "sel", { id: "clients" }, c)],
   ], next = steps.findIndex((s) => s[0] === false);
   const models = S.models.filter((m) => m.enabled), D = DOCTOR;
@@ -1313,8 +1314,11 @@ function dOverview() {
 
 function dProviders() {
   const provs = sortedProviders(), fresh = !provs.some((p) => p.keys);
-  const cards = !fresh ? "" : sec("Choose a provider", `<div class="pgrid">${[...provs].sort((a, b) => b.free_tier - a.free_tier || a.name.localeCompare(b.name)).map((p) =>
-    `<div class="pcard">${av(p.name)}<div class="grow"><b style="font-weight:500">${link(p.name, pid(p.name))}</b> ${p.free_tier ? chip("ok", "free tier") : ""}<div class="muted sm">${esc(p.about || "")}</div>${p.key_url ? `<div class="sm" style="margin-top:4px">${xlink("Get a key", p.key_url)}</div>` : ""}</div></div>`).join("")}</div>`);
+  const autoCount = new Map(Z.S.providers.map((p) => [p.name, Z.S.models.filter((m) => m.provider === p.name && m.auto).length]));
+  const cards = !fresh ? "" : sec("Choose a provider", `<div class="pgrid">${[...provs].sort((a, b) => (autoCount.get(b.name) > 0) - (autoCount.get(a.name) > 0) || b.free_tier - a.free_tier || a.name.localeCompare(b.name)).map((p) =>
+    { const auto = (autoCount.get(p.name) || 0) > 0;
+      return `<div class="pcard">${av(p.name)}<div class="grow"><b style="font-weight:500">${link(p.name, pid(p.name))}</b> ${p.free_tier ? chip("ok", "free tier") : ""}${auto ? chip("ok", "picks automatically") : ""}<div class="muted sm">${esc(p.about || "")}</div>${auto ? "" : `<div class="muted sm" style="margin-top:2px">By name only: no published test scores, so ZergSwarm will not pick its models by itself.</div>`}${p.key_url ? `<div class="sm" style="margin-top:4px">${xlink("Get a key", p.key_url)}</div>` : ""}</div></div>`; })
+    .join("")}</div>`);
   return page([["Providers"]], "Providers", { pic: pic("provider"), lead: fresh ? "A provider is a company that runs AI models. Pick one, get a key from its site, and paste it on its page here. The key stays on this computer." : "Each provider keeps a pool of keys. Switching a provider off removes it from every route without deleting its keys.",
     // First visit: the cards below are the way in; adding a custom endpoint and probing balances wait until there are keys.
     main: fresh ? btn(bi("add", "Add your own endpoint"), "sel", { id: "new/provider" }) : btn(bi("spend", "Probe every balance"), "probe", {}, "", 'title="Check each balance (free)"') + btn(bi("add", "Add provider"), "sel", { id: "new/provider" }, "p") },

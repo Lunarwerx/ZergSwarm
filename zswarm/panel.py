@@ -42,11 +42,13 @@ _POSITION = re.compile(r"^[\s>*_#`\-]*(UPHOLD|REJECT|CONCEDE|MISSED)\b[\s*_:`\-]
 
 def panelists(models: list[str] | None = None) -> list[str]:
     """The panel's models, resolved: an entry may be a model, an alias or a role name (judge, summarize, ...).
-    Two to MAX_PANEL distinct models; the default is config.PANEL (`panel` in settings.toml overrides it)."""
+    Two to MAX_PANEL distinct models; the default is config.PANEL (`panel` in settings.toml), and with none set,
+    two makers' models this machine's keys reach (dispatch.default_panel)."""
     from . import config
+    from .dispatch import default_panel
 
     out: list[str] = []
-    for name in models or config.PANEL:
+    for name in models or config.PANEL or default_panel():
         n = str(name).strip().lower()
         m = config.resolve_role(n) if n in config.ROLES else config.resolve_model(n)
         if m in out:

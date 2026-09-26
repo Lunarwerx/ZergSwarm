@@ -135,4 +135,4 @@ def test_the_settings_panel_overrides_the_default_and_reload_restores_it(user_to
     user_toml("settings", 'panel = ["gemini-3.8-flash", "deepseek-flash"]\n')
     assert p.panelists() == [M, D]
     user_toml("settings", "")  # a file that says nothing about the panel must not keep the previous one's seats
-    assert config.PANEL == [config.DEFAULT_MODEL_TOOL_FREE, config.DEFAULT_MODEL_TOOLS]
+    assert config.PANEL == []  # back to AUTO: two makers' models the keys here reach (dispatch.default_panel)

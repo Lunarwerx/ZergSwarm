@@ -46,10 +46,9 @@ checked against the JSON schema you asked for. Your agent stays the one that pla
 ```bash
 irm https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.ps1 | iex        # Windows (PowerShell)
 curl -fsSL https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.sh | sh     # macOS and Linux
-# then, in a NEW terminal:
-zswarm install        # connect it to Claude Code
-zswarm ui             # open the console and paste a free API key
 ```
+
+That one command installs it, connects it to every assistant it finds (Claude Code, Claude Desktop, Codex) and opens the console. Paste a free API key there and you are done.
 
 ## ✨ At a glance
 
@@ -65,8 +64,10 @@ zswarm ui             # open the console and paste a free API key
 
 ## 📦 Install
 
-Needs **Python 3.11 or newer**. Each installer puts the `zswarm` command on your PATH through
-[pipx](https://pipx.pypa.io), in its own environment, from the latest release.
+Each installer puts the `zswarm` command on your PATH from the latest release, in its own environment: with
+[uv](https://docs.astral.sh/uv/) when you have it, else with [pipx](https://pipx.pypa.io) on a Python 3.11 or newer.
+With neither, it installs uv, which brings its own Python, so there is nothing to install first. Then it runs
+`zswarm setup`.
 
 **Windows** (PowerShell)
 
@@ -84,23 +85,27 @@ curl -fsSL https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.sh
 
 ```bash
 pipx install "git+https://github.com/Lunarwerx/ZergSwarm"      # or: pip install "git+https://..."
+uv tool install "git+https://github.com/Lunarwerx/ZergSwarm"
 ```
+
+Then run `zswarm setup`.
 
 Every [release](https://github.com/Lunarwerx/ZergSwarm/releases) also carries the wheel and the source archive,
 if you would rather download and install a file (`pipx install zergswarm-<version>-py3-none-any.whl`).
 
-Open a new terminal afterwards so it sees the `zswarm` command, then check it: `zswarm --version`.
+New terminals see the `zswarm` command; check it with `zswarm --version`. To install without connecting anything,
+set `ZERGSWARM_NO_SETUP=1` first.
 
 ## 🚀 Quick start
 
-1. **Connect your agent.** `zswarm install` registers the MCP server with Claude Code. Add
-   `--client all` for Claude Desktop and Codex too, and `--instructions` to add a short "when to use the swarm"
-   note to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. The console's **Clients** page does the same in one
-   click.
-2. **Add a key.** `zswarm ui` opens the console at `http://127.0.0.1:7790/ui`. Pick a provider, follow its
-   *Get a key* link, and paste the key on its page. ZergSwarm checks it with the provider straight away and keeps
-   it only if it works. From the terminal: `zswarm keys add gemini` (it asks for the key, hidden, and checks it the
-   same way).
+1. **Install.** The one-line installer above; it ends by running `zswarm setup`, which registers the MCP server
+   with every assistant it finds and opens the console at `http://127.0.0.1:7790/ui`. Run `zswarm setup` again any
+   time; `--client` picks the assistants, and `--instructions` also adds a short "when to use the swarm" note to
+   `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
+2. **Add a key.** In the console, pick a provider, follow its *Get a key* link, and paste the key on its page. The
+   providers marked *picks automatically* are the ones ZergSwarm can choose models from by itself. The key is
+   checked with the provider straight away and kept only if it works. From the terminal: `zswarm keys add gemini`
+   (it asks for the key, hidden, and checks it the same way).
 3. **Ask your agent to use it**, in a new chat:
    > *"Use zswarm to read every file under src/ and list the functions that do network I/O."*
 
@@ -135,6 +140,10 @@ If a provider runs out mid-task, the task carries on with the next configuration
 Preview the choice without a model call: `zswarm_select`, or **Routing & roles › Preview AUTO** in the console.
 Details: [docs/RUNTIME-SELECTION.md](docs/RUNTIME-SELECTION.md).
 
+Everything else that needs a model picks the same way: the judge, the doubt and review roles, the blind panel
+(two different makers' models) and a bare `auto`. So one key is enough: every part of ZergSwarm runs on the
+providers you have a key for, never on one you do not.
+
 ## 🧰 Tools your agent gets
 
 | tool | what it does |
@@ -165,17 +174,19 @@ Every provider is one TOML file in [zswarm/providers/](zswarm/providers/). Yours
 and change only what they say; a new file name is a new provider. The console writes these files for you and
 keeps your comments.
 
-| provider | free tier | notes |
-| --- | :---: | --- |
-| Gemini | ✅ | Google's models; the vision default |
-| Groq | ✅ | very fast open models, daily limits |
-| Cerebras | ✅ | very fast open models, daily limits |
-| Mistral | ✅ | Mistral's own models, reached by name: AUTO does not route to it |
-| DeepSeek | | direct, and prices halve off-peak |
-| OpenRouter | | one account, hundreds of models; a few are free |
-| Hugging Face | | a router to many open models; a small free monthly credit |
-| Cohere · Moonshot · DashScope · Zhipu · Perplexity | | paid per use |
-| anything OpenAI-compatible | | Ollama, vLLM, LM Studio, Together, Azure, your own gateway: **+ Add provider** |
+| provider | free tier | picks automatically | notes |
+| --- | :---: | :---: | --- |
+| Gemini | ✅ | ✅ | Google's models; they can read images |
+| Groq | ✅ | ✅ | very fast open models, daily limits |
+| Cerebras | ✅ | ✅ | very fast open models, daily limits |
+| Mistral | ✅ | | Mistral's own models, reached by name |
+| DeepSeek | | ✅ | direct, and prices halve off-peak |
+| OpenRouter | | ✅ | one account, hundreds of models; a few are free |
+| Hugging Face | | | a router to many open models, reached by name; a small free monthly credit |
+| Cohere · Moonshot · DashScope · Zhipu · Perplexity | | | paid per use, reached by name |
+| anything OpenAI-compatible | | | Ollama, vLLM, LM Studio, Together, Azure, your own gateway: **+ Add provider** |
+
+A provider picks automatically when its models have published benchmark scores ZergSwarm ships with. The others work too: name a model (`model: "command-a"`) or point a role at it; ZergSwarm just will not choose it on its own.
 
 ```toml
 # ~/.zswarm/providers/ollama.toml: a local server as a provider
@@ -213,8 +224,9 @@ list is in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 | command | what it does |
 | --- | --- |
+| `zswarm setup` | connect every assistant found here and open the console (what the installers run) |
 | `zswarm ui` | open the console (starts the local server if it is not running) |
-| `zswarm install` | register with Claude Code; `--client all` for Claude Desktop and Codex too |
+| `zswarm install` | register with Claude Code only, or the clients `--client` names |
 | `zswarm keys add <provider>` | add a key, typed hidden; `zswarm keys` lists every pool |
 | `zswarm doctor` | what is configured and ready |
 | `zswarm ask "<question>"` | one tool-free question from the terminal |

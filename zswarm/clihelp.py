@@ -55,6 +55,7 @@ META: dict[str, dict] = {
     "usage": {"effect": READ, "guide": "Who used the swarm and which Claude fan-outs the routing gate saw; --json returns data."},
     "bench": {"effect": SPEND, "guide": "Runs paid benchmark arms. Check `zswarm benchdb has` first: a measured arm is not re-spent unless --fresh."},
     "install": {"effect": WRITE, "guide": "Registers zswarm with Claude Code (~/.claude.json), Claude Desktop and/or Codex (--client); --instructions also edits the global CLAUDE.md / AGENTS.md. A one-time human setup step."},
+    "setup": {"effect": WRITE, "guide": "The first run: registers zswarm with every assistant found (Claude Code, Claude Desktop, Codex; --client picks), then opens the console. What the installers run. For a human."},
     "ui": {"effect": WRITE, "guide": "Starts the shared server if needed and opens the web console in a browser (--no-open prints the address). For a human."},
     "mcp": {"effect": WRITE, "guide": "Long-running server that blocks the terminal; Claude Code launches it. An agent should not start it."},
     "serve-ensure": {"effect": WRITE, "guide": "May start the shared HTTP MCP server as a hidden process; returns JSON {ok}."},

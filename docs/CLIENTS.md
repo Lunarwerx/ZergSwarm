@@ -3,6 +3,7 @@
 `zswarm install --client <name>` (or the console's **Connect clients** page) writes one `zswarm` entry into the
 client's config and leaves the rest of the file alone. `--client all` does every client; `--remove` takes the
 entry out; `--instructions` also adds the short how-to block to the client's global instruction file.
+`zswarm setup` registers every client it finds on the machine, which is what the one-line installers run.
 
 Below is what each one writes, so you can do it by hand or check it. `<python>` is the interpreter zswarm is
 installed in (`python -c "import sys; print(sys.executable)"`).

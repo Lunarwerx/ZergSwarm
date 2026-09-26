@@ -367,10 +367,7 @@ def doubt_verdict(cycles: list[list[dict]]) -> dict:
 
 async def run_doubt(mgr, artifact: str, contract: str, history: list[list[dict]] | None = None) -> tuple[dict, object]:
     """One doubt cycle on the `doubt` role's model; returns the payload and the Result (for the caller's ledger)."""
-    from . import config
-
-    model = config.resolve_role("doubt")
-    r = await mgr.ask_routed(doubt_prompt(artifact, contract), model, system=DOUBT_CONTRACT, schema=DOUBT_SCHEMA)
+    r = await mgr.ask_role("doubt", doubt_prompt(artifact, contract), system=DOUBT_CONTRACT, schema=DOUBT_SCHEMA)
     if r.status != "ok" or not isinstance(r.data, dict):
         return {"error": f"doubt pass did not complete ({r.status}): {r.error or 'no structured result'}", "model": r.model}, r
     issues = reconcile(r.data.get("issues") or [])

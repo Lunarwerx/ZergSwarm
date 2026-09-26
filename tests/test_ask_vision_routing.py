@@ -56,7 +56,7 @@ def _record(monkeypatch, answer):
 
 
 def test_only_gemini_models_are_registered_as_seeing():
-    assert config.sees("gemini-3.8-flash") and config.sees(config.DEFAULT_MODEL_VISION)
+    assert config.sees("gemini-3.8-flash")
     for blind in ("deepseek-flash-or", "glm-4.5-air", "mistral-medium-3.5", "groq-gpt-oss-120b", "deepseek-flash"):
         assert not config.sees(blind), blind
 

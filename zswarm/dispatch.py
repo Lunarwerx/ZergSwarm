@@ -130,6 +130,48 @@ def plan_for(task, explain=False):
                  min_context=(len(task.prompt) + len(task.system or "")) // 3 + task.max_tokens)
 
 
+def first_choice(profile, *, tools="none", backend="api", vision=False):
+    """The model AUTO runs first for this profile on this machine now: the head of the plan over the pools that can
+    serve (stepping down like a task does), else the evidence's own head, so a caller with no key names what it
+    would need. Every model pick that is not a batch task - a role, the panel, the doctor's routes, a bare `auto` -
+    comes through here, so it lands on a provider this machine has a key for. Before 2026-09-26 they took the
+    evidence's head alone: a machine with only a Groq key had its judge, doubt and panel pinned to OpenRouter and
+    DeepSeek models it could not call."""
+    live = _plan(profile, tools=tools, backend=backend, vision=vision, min_context=0)["candidates"]
+    if live:
+        return live[0]["model"]
+    listed = selection.plan(profile, tools=tools, backend=backend, vision=vision)["candidates"]
+    if not listed:
+        raise ValueError(f"NoCapableSwarmRoute: no evaluated model supports profile {profile} (tools {tools}, backend {backend})")
+    return listed[0]["model"]
+
+
+def default_panel(size=2):
+    """The blind panel when settings.toml names none: the first `size` tool-free picks this machine can serve, general
+    first and then routine (a Groq key alone has one general model and a second only at routine), one per model maker
+    where the plans offer several (a panel of one maker's training agrees with itself), then any distinct model.
+    Fewer than two is an error naming what to add."""
+    by_slug = {p["slug"]: p for p in selection.evidence()["points"]}
+    candidates = [c for profile in ("general", "routine") for c in _plan(profile, tools="none", min_context=0)["candidates"]]
+
+    def maker(c):
+        return by_slug.get(c.get("benchmark_slug"), {}).get("creator") or c["model"]
+
+    out, makers = [], set()
+    for c in candidates:
+        if len(out) < size and maker(c) not in makers:
+            out.append(c["model"])
+            makers.add(maker(c))
+    for c in candidates:
+        if len(out) < size and c["model"] not in out:
+            out.append(c["model"])
+    if len(out) < 2:
+        raise ValueError("a panel needs two models this machine can call, and the keys here reach "
+                         f"{len(out)}: add a key for another provider (zswarm ui), or name the panel with `panel = [...]` "
+                         f"in {config.SETTINGS_FILE}")
+    return out
+
+
 def unreachable(task):
     """Why no evaluated route, stepped down or not, can take this task, or None. Only when the machine HAS keys for
     routes the profile admits and every one of them is disabled: a route with no key here is the run's

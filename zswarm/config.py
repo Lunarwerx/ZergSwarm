@@ -73,11 +73,10 @@ DEFAULT_MODEL = "deepseek-flash"
 #   tool-USING (agentic)  gemini-3.8-flash 24/24 · deepseek-flash 22/24 · glm-4.5-air 17/24 · mistral-3.5 15/24
 # gpt-oss is the best reasoner AND the worst tool-caller (it emits harmony-format tool calls this backend
 # 400s on), so picking one default for both would be wrong either way. A caller that names a model or a
-# role still gets exactly that; AUTO only fills in the blank, from the published ranked profiles below
-# (selection.plan), not from the gpt-oss/Gemini legs above.
+# role still gets exactly that; AUTO only fills in the blank, from the published ranked profiles
+# (selection.plan) over the providers this machine has a key for (dispatch.first_choice), never from a
+# model named here: a named default is one provider's model, and a machine without that key could not call it.
 AUTO = "auto"
-DEFAULT_MODEL_TOOL_FREE = "rank:gpt-6-luna-high"
-DEFAULT_MODEL_TOOLS = "rank:mimo-v2-6-pro"
 # A leg that is ALIVE but crawling fails over like a dead one, while the task still has time (2026-09-22,
 # Connections: 48 read-only code-fix tasks on the free gemini-3.8-flash leg at concurrency 48 averaged ~55-60 s
 # a turn and 47 hit their 900 s timeout; the same prompts on deepseek-flash ran ~8 s a turn). Judged after
@@ -140,9 +139,6 @@ LOAD_BIAS = _LOAD_BIAS_DEFAULT
 # it, new jobs and asks are refused (ledger.over_daily_cap); work already running finishes. None: no cap.
 DAILY_CAP_USD: float | None = None
 SLOW_MARK_S = 600.0
-# An ask that carries images needs eyes: not every ranked AUTO pick has them, so AUTO with images
-# resolves here instead. Gemini's OpenAI-compatible endpoint reads image_url content parts.
-DEFAULT_MODEL_VISION = "gemini-3.8-flash"
 
 
 def is_tool_free(tools: str | list[str] | None) -> bool:
@@ -156,13 +152,12 @@ def is_tool_free(tools: str | list[str] | None) -> bool:
 
 
 def default_model_for(tools: str | list[str] | None = "read", backend: str = "api") -> str:
-    """The model AUTO resolves to: the first published-profile candidate selection.plan finds capable of
-    these tools on this backend (e.g. `cc` needs an Anthropic Messages endpoint)."""
-    from .selection import plan, profile_for
-    candidates = plan(profile_for(None, tools), tools=tools, backend=backend)["candidates"]
-    if not candidates:
-        raise ValueError("NoCapableSwarmRoute: no evaluated model supports this backend and task")
-    return candidates[0]["model"]
+    """The model AUTO resolves to: the first published-profile candidate capable of these tools on this backend
+    (e.g. `cc` needs an Anthropic Messages endpoint), on a provider this machine has a key for when any can serve."""
+    from .dispatch import first_choice
+    from .selection import profile_for
+
+    return first_choice(profile_for(None, tools), tools=tools, backend=backend)
 
 
 # A role is a kind of work; the model wired to it is a machine decision ([roles] in settings.toml), not a code one.
@@ -188,9 +183,10 @@ ROLES: dict[str, str | None] = {
 }
 
 # The blind panel beside the judge role (zswarm_panel, panel.py): the models that review ONE prompt side by side and
-# then rebut each other anonymously. Two vendors by default - the free tool-free and tool-using defaults - because a
-# panel of one model's training agrees with itself. A machine sets its own with `panel = [...]` in settings.toml.
-PANEL: list[str] = [DEFAULT_MODEL_TOOL_FREE, DEFAULT_MODEL_TOOLS]
+# then rebut each other anonymously. Empty means AUTO: two makers' models this machine's keys reach
+# (dispatch.default_panel), because a panel of one model's training agrees with itself. A machine sets its own with
+# `panel = [...]` in settings.toml.
+PANEL: list[str] = []
 
 # Peak windows, UTC, Monday-Friday: 01:00-04:00 and 06:00-10:00.
 PEAK_WINDOWS = ((1, 4), (6, 10))
@@ -498,11 +494,11 @@ def resolve_model(name: str | None) -> str:
     if not name:
         return DEFAULT_MODEL
     n = name.strip().lower()
-    # AUTO with no tools context: fall back to the TOOL-USING default, which is the safe one - it can do
+    # AUTO with no tools context: fall back to the TOOL-USING pick, which is the safe one - it can do
     # tool-free work too, where the reverse may not be. Callers that know
     # their tools (Task._resolve_backend) resolve AUTO themselves before reaching here.
     if n == AUTO:
-        return DEFAULT_MODEL_TOOLS
+        return default_model_for("read")
     n = ALIASES.get(n, n)
     if n not in MODELS and _register_passthrough(n, name.strip()):
         return n
@@ -529,8 +525,10 @@ def resolve_role(role: str | None) -> str:
     if not ROLES[r]:
         raise ValueError(f"no model wired for role {role!r}; set `{r} = \"<model>\"` under [roles] in {SETTINGS_FILE}")
     if ROLES[r] == AUTO:
-        from .selection import plan, profile_for
-        return plan(profile_for(r, "none"), vision=r == "vision")["candidates"][0]["model"]
+        from .dispatch import first_choice
+        from .selection import profile_for
+
+        return first_choice(profile_for(r, "none"), vision=r == "vision")
     return resolve_model(ROLES[r])
 
 

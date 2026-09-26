@@ -21,11 +21,11 @@ SCHEMA = {"type": "object", "properties": {"pass": {"type": "boolean"}, "reason"
 
 
 def judge_model(name: str | None = None) -> str:
-    """--judge, else whatever the `judge` role is pinned to, else the tool-free default. A role left at AUTO is
-    not a pin: AUTO may pick a different model per call, and a judge that drifts between rows makes the arms
-    incomparable, so it falls through to the fixed default."""
+    """--judge, else whatever the `judge` role is pinned to, else AUTO's tool-free pick on this machine's keys. A role
+    left at AUTO is not a pin: AUTO may fail over to a different model per call, and a judge that drifts between rows
+    makes the arms incomparable, so it falls through to one named model, which the ask then runs pinned."""
     role = config.ROLES.get("judge")
-    return name or (role if role and role != getattr(config, "AUTO", "auto") else None) or config.DEFAULT_MODEL_TOOL_FREE
+    return name or (role if role and role != getattr(config, "AUTO", "auto") else None) or config.default_model_for("none")
 
 
 def prompt_for(task, criterion: str, truth: dict, answer: str) -> str:

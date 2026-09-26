@@ -15,6 +15,7 @@ import functools
 import inspect
 import os
 import traceback
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -30,19 +31,9 @@ from .ledger import append_row, ask_row, usage_report
 from .results import job_payload, results_from_disk
 from .spec import EFFORTS, Task
 
-mcp = FastMCP("zswarm", instructions=(
-    "zswarm: fan out many cheap, autonomous worker tasks and read their results as data. "
-    "Use zswarm_run for batches (each task gets a cwd, a prompt, a tool preset, optional JSON schema). "
-    "Use zswarm_ask for a single tool-free question. "
-    "All delegated subtasks belong here, including code, research, review and judgment. Desktop Opus 5.5 "
-    "orchestrates and makes the final decision. AUTO selects the cheapest available evaluated configuration "
-    "meeting the task profile, preserving its measured reasoning effort. Use zswarm_select to preview "
-    "profiles and evidence without a model call. Exhaust suitable Swarm routes before a desktop exception. "
-    "Backends: api (fastest, hundreds concurrent, sandboxed tools), "
-    "cc (headless Claude Code with a compatible evaluated model, ~6 concurrent; read/none presets run on a "
-    "Read/Grep/Glob allowlist, and edit/all bypass permissions only with confirm_write=true as well, or the task is refused). "
-    "Verify anything load-bearing by opening the cited file:line yourself or re-running the quoted command, and drop a finding whose quoted line is not there; a second swarm pass is the same guess asked twice, not verification. Workers are cheap, judgment is not."
-))
+# The instructions every client shows its model: the same text `zswarm install --instructions` writes into
+# CLAUDE.md / AGENTS.md (data/agent-instructions.md), so "delegate the cheap, wide work here" is said once.
+mcp = FastMCP("zswarm", instructions=files("zswarm").joinpath("data", "agent-instructions.md").read_text(encoding="utf-8").strip())
 
 _manager: JobManager | None = None
 _adopted = False
@@ -321,10 +312,9 @@ async def zswarm_apply_proposals(job_id: str, ids: list[str] | None = None, appl
     edit whose old_string is already gone comes back as an ERROR row and writes nothing."""
     doc = JobManager.load_from_disk(job_id)
     doc = {**doc, "tasks": blobs.expand_all_with(doc.get("tasks") or [], archive.blob_reader(job_id))}
-    model = config.resolve_role("judge")
 
     async def ask(prompt: str, system: str, schema: dict):
-        return await manager().ask_routed(prompt, model, system=system, schema=schema)
+        return await manager().ask_role("judge", prompt, system=system, schema=schema)
 
     out = await proposals.review_job(doc, ask, ids=ids, apply=apply)
     calls = out.pop("calls")

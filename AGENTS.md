@@ -14,9 +14,9 @@ package, `zswarm/`, asyncio, no GPU. `zswarm.py` at the root runs it from a clon
   priority, custom providers and models, roles, options), through tomlkit so hand-written comments survive. The
   console, the CLI `keys add|remove` verbs and the HTTP API all call it.
 - `zswarm/console.py` + `zswarm/ui/console.html`: `zswarm ui` and `/api/*`, mounted on the shared server.
-- `zswarm/install.py`: registration with Claude Code, Claude Desktop and Codex.
+- `zswarm/install.py`: `zswarm setup` (every client found, then the console) and `zswarm install`: registration with Claude Code, Claude Desktop and Codex.
 - `zswarm/selection.py`: AUTO, over the models with a `benchmark_slug` and `zswarm/data/published-models.json`;
-  priority and switches filter here.
+  priority and switches filter here. Roles, the panel and a bare `auto` pick through `dispatch.first_choice` over the keys this machine holds.
 - `zswarm/client.py` (`KeyPool`, `ChatClient`), `jobs.py` (`JobManager`), `dispatch.py` (failover), `agent.py`
   and `worker.py` (the worker loop), `tools.py` (the sandboxed worker tools).
 - `zswarm/mcp_server.py`: every MCP tool; `shared.py`: the one HTTP server per machine.

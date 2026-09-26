@@ -198,6 +198,16 @@ def test_dead_key_state_is_shared_and_backs_off(tmp_path, monkeypatch):
     assert b.available() == 3 and {s["strikes"] for s in b.status()} == {0}
 
 
+def test_dead_rest_survives_a_thousand_strikes(tmp_path, monkeypatch):
+    # A revoked key probed 1,024 times made 2**1023 overflow float, and every `zswarm keys probe` crashed on it.
+    monkeypatch.setattr(config, "KEYS_STATE", tmp_path / "keys.json")
+    p = KeyPool(K)
+    for _ in range(1030):
+        p.rest(K[0], 0, status=401, dead=True)
+    st = {s["fingerprint"]: s for s in p.status()}[config.fingerprint(K[0])]
+    assert st["strikes"] == 1030 and st["dead"]
+
+
 def test_rest_is_capped_at_six_hours(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "KEYS_STATE", tmp_path / "keys.json")
     p = KeyPool(K)

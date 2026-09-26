@@ -488,7 +488,8 @@ class KeyPool:
             e = dict(self._entry(key))
             if dead:
                 e["strikes"] = int(e.get("strikes") or 0) + 1
-                seconds = min(DEAD_REST_CAP_S, DEAD_REST_BASE_S * (2 ** (e["strikes"] - 1)))
+                # The exponent is capped: a key probed 1,024 times made 2**1023 overflow float and crashed every probe.
+                seconds = min(DEAD_REST_CAP_S, DEAD_REST_BASE_S * (2 ** min(e["strikes"] - 1, 30)))
                 if e["strikes"] >= DEAD_STRIKES:
                     self._disable_entry(e, REVOKED, status=status, now=now)
             e["rest_until"] = max(float(e.get("rest_until") or 0.0), now + seconds)

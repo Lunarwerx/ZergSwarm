@@ -55,11 +55,13 @@ async def doctor(m: JobManager) -> dict:
 
     out["egress_ledger"] = {**egress.verify(), "receipts_not_written_this_process": egress.FAILURES}
     # What AUTO can serve right now, per route, from the same offline state zswarm_run refuses a job on: a spent
-    # free pool and a fallback with no credit are said HERE, not ten minutes into a job (2026-09-24).
-    out["routes_now"] = {m: route_health(m) for m in dict.fromkeys((config.DEFAULT_MODEL_TOOLS, config.DEFAULT_MODEL_TOOL_FREE))}
+    # free pool and a fallback with no credit are said HERE, not ten minutes into a job (2026-09-24). The routes are
+    # AUTO's first picks for tool work and tool-free work on THIS machine's keys (dispatch.first_choice).
+    out["routes_now"] = {m: route_health(m) for m in dict.fromkeys((config.default_model_for("read"), config.default_model_for("none")))}
     dead = [m for m, h in out["routes_now"].items() if not h["serves"]]
     if dead:
-        out["routes_warning"] = f"no leg can serve {', '.join(dead)} now: zswarm_run refuses those jobs until a key rests out or is topped up"
+        out["routes_warning"] = (f"no leg can serve {', '.join(dead)} now: zswarm_run refuses those jobs until a key rests out or "
+                                 "is topped up, or a key is added for a provider whose models have published scores (zswarm ui)")
     # The one-line answer to "can this swarm take work at all", cached for the agent_routing_gate hook (verdict.py).
     # `key` above is the DeepSeek key alone; a machine without one can still serve every auto route.
     out["verdict"] = verdict.write()

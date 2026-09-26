@@ -8,6 +8,9 @@ the install; this writes one entry per client and touches nothing else in its fi
                    stdio, with tool_timeout_sec raised: Codex cuts a tool call at 60 s by default, and a zswarm_run
                    that waits for its batch takes longer.
 
+`zswarm setup` is the first run in one command (the installers end with it): every client found on this machine,
+then the console.
+
 `--instructions` also writes a short "how to use zswarm" block (data/agent-instructions.md) into the global
 instruction file each client reads (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md), between markers, so a re-run
 replaces it and `--remove` takes it out.
@@ -17,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from importlib.resources import files
@@ -218,6 +222,42 @@ def clients() -> list[dict]:
         path, on = _registered(name)
         out.append({"client": name, "config": str(path), "exists": path.exists(), "registered": on})
     return out
+
+
+def detected_clients() -> list[str]:
+    """The assistants installed on this machine, judged by their config folders or their commands on PATH."""
+    found = []
+    if (Path.home() / ".claude.json").exists() or (Path.home() / ".claude").is_dir() or shutil.which("claude"):
+        found.append("claude-code")
+    if claude_desktop_path().parent.is_dir():
+        found.append("claude-desktop")
+    if codex_home().is_dir() or shutil.which("codex"):
+        found.append("codex")
+    return found
+
+
+def cmd_setup(a) -> int:
+    """`zswarm setup`: the first run in one command, and what the installers end with. Registers zswarm with every
+    assistant found here (Claude Code when none is), then opens the console, where the one thing left is a key."""
+    from . import keys
+    from .console import open_console
+
+    chosen = getattr(a, "client", None) or detected_clients() or ["claude-code"]
+    names = list(CLIENTS) if "all" in chosen else list(dict.fromkeys(chosen))
+    for name in names:
+        for line in install_client(name, instructions=getattr(a, "instructions", False)):
+            print(line)
+    config.ensure_dirs()
+    if "claude-code" in names:
+        ensure_cc_config()
+    rc = open_console(getattr(a, "port", None), no_open=getattr(a, "no_open", False))
+    labels = {"claude-code": "Claude Code", "claude-desktop": "Claude Desktop", "codex": "Codex"}
+    print(f"\nConnected: {', '.join(labels[n] for n in names)}. Restart {'it' if len(names) == 1 else 'them'} "
+          "(or open a new chat) to pick ZergSwarm up.")
+    if not any(keys.pool_for(p) for p in config.PROVIDERS):
+        print("Next: paste an API key in the console (Gemini, Groq and Cerebras have free tiers).")
+    print('Then ask your assistant: "Use zswarm to ..."')
+    return rc
 
 
 def cmd_install(a) -> int:

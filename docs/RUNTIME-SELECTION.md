@@ -65,6 +65,17 @@ profile and provides the `zswarm_run` instruction. Desktop workers require a rec
 The complete plan and attempted models are recorded in results; the job ledger carries profile,
 benchmark identity and actual effort. The model selected in the desktop app is not changed by this code.
 
+## Every pick uses your keys
+
+Before 2026-09-26, roles and the panel were pinned to fixed models, so a machine with only a Groq key
+had its judge, doubt and panel pointing at OpenRouter and DeepSeek models it could not call.
+Picks that are not part of a batch task now come from `dispatch.first_choice`: the head of the
+key-aware plan, the pools this machine has keys for, stepping down a profile the way a task does,
+else the evidence's own head. It serves the AUTO roles, the auto model and the doctor's `routes_now`;
+role asks (the verify judge, the proposal judge, doubt) run an AUTO role through
+`dispatch.ask_selected` with failover across every evaluated route with a key. The blind panel
+defaults to the first two tool-free general picks this machine can serve, one per model maker.
+
 ## Why a model was skipped, and how load spreads a batch
 
 Every plan (`zswarm_select`, and `selection` on each result) carries `rejected`: each evaluated route

@@ -400,3 +400,35 @@ def sign_in_url(port: int) -> str:
     """The one-time link that signs a browser in to the console (it carries the token: open it, never log it)."""
     return f"{url(port)}?t={token()}"
 
+
+def open_console(port: int | None = None, no_open: bool = False) -> int:
+    """`zswarm ui` and the end of `zswarm setup`: start the shared server if it is not up, then open the console in a
+    browser, or print its address when there is none (a headless machine) or no_open asks. Returns an exit code."""
+    import json
+    import webbrowser
+
+    from . import shared
+
+    home = port or shared.PORT
+    out = shared.ensure(home)
+    port = home
+    if out["ok"] and not answers(home):
+        # A server started before the console existed. Its jobs belong to live chats, so it is left running and
+        # the console gets a server of its own on the next free port until that one is restarted.
+        for port in range(home + 1, home + 21):
+            out = shared.ensure(port)
+            if out["ok"] and answers(port):
+                break
+        print(f"The zswarm server on port {home} predates the console, so the console runs on {port} for now. "
+              f"Restart {home} when no job is running and `zswarm ui` goes back to it.")
+    if not out["ok"]:
+        print(json.dumps(out))
+        return 1
+    # Asked of the running server: a shell's ZSWARM_UI_SIGN_IN says nothing about the environment it started with.
+    gated = ui_status(port) == 401
+    print(f"zswarm console: {url(port)}  (API token: {token_path()})")
+    if no_open or not webbrowser.open(sign_in_url(port) if gated else url(port)):
+        if gated:
+            print(f"sign in once at {url(port)}?t=<the token in {token_path()}>")
+    return 0
+

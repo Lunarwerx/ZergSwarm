@@ -11,7 +11,7 @@ import sys
 
 from . import __version__, clihelp, config
 from .commands import COMMANDS
-from .install import cmd_install
+from .install import cmd_install, cmd_setup
 
 # The pipeline commands own their argument parsing, so they are dispatched before argparse sees the line.
 PIPELINE = {"distill", "triage", "indexdiet", "native", "benchdb", "filters", "comply", "skillbench", "review", "loop", "optimize", "procedures", "replay", "scripted"}
@@ -205,6 +205,13 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--stdio", action="store_true", help="register a stdio server per chat instead of the one shared HTTP server")
     i.add_argument("--track-savings", dest="track_savings", action="store_true", help="also schedule `savings --record` daily (Windows Task Scheduler)")
 
+    st = sub.add_parser("setup", help="first run in one command: connect every assistant found here (Claude Code, Claude Desktop, Codex) and open the console")
+    st.add_argument("--client", action="append", choices=["claude-code", "claude-desktop", "codex", "all"],
+                    help="connect these instead of the ones found on this machine (repeatable)")
+    st.add_argument("--instructions", action="store_true", help="also write the how-to-use-zswarm block into ~/.claude/CLAUDE.md / ~/.codex/AGENTS.md")
+    st.add_argument("--port", type=int, default=None, help="the shared server's port (default 7790)")
+    st.add_argument("--no-open", dest="no_open", action="store_true", help="print the console's address instead of opening a browser")
+
     u = sub.add_parser("ui", help="open the web console (keys, providers, models, priority, roles, jobs, client setup)")
     u.add_argument("--port", type=int, default=None, help="the shared server's port (default 7790)")
     u.add_argument("--no-open", dest="no_open", action="store_true", help="print the address instead of opening a browser")
@@ -272,37 +279,13 @@ def main(argv: list[str] | None = None) -> int:
 
         return shared.connect(a.port or shared.PORT)
     if a.cmd == "ui":
-        from . import console, shared
+        from .console import open_console
 
-        home = a.port or shared.PORT
-        out = shared.ensure(home)
-        port = home
-        if out["ok"] and not console.answers(home):
-            # A server started before the console existed. Its jobs belong to live chats, so it is left running and
-            # the console gets a server of its own on the next free port until that one is restarted.
-            for port in range(home + 1, home + 21):
-                out = shared.ensure(port)
-                if out["ok"] and console.answers(port):
-                    break
-            print(f"The zswarm server on port {home} predates the console, so the console runs on {port} for now. "
-                  f"Restart {home} when no job is running and `zswarm ui` goes back to it.")
-        if not out["ok"]:
-            print(json.dumps(out))
-            return 1
-        # Asked of the running server: a shell's ZSWARM_UI_SIGN_IN says nothing about the environment it started with.
-        gated = console.ui_status(port) == 401
-        link = console.sign_in_url(port) if gated else console.url(port)
-        print(f"zswarm console: {console.url(port)}  (API token: {console.token_path()})")
-        if a.no_open:
-            if gated:
-                print(f"sign in once at {console.url(port)}?t=<the token in {console.token_path()}>")
-        else:
-            import webbrowser
-
-            webbrowser.open(link)
-        return 0
+        return open_console(a.port, no_open=a.no_open)
     if a.cmd == "install":
         return cmd_install(a)
+    if a.cmd == "setup":
+        return cmd_setup(a)
     return asyncio.run(COMMANDS[a.cmd](a))
 
 

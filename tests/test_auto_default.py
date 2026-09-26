@@ -12,18 +12,30 @@ from zswarm import config
 from zswarm.spec import Task
 
 
-@pytest.mark.parametrize("tools,expected", [
-    ("none", config.DEFAULT_MODEL_TOOL_FREE),
-    ("", config.DEFAULT_MODEL_TOOL_FREE),
-    (None, config.DEFAULT_MODEL_TOOL_FREE),
-    ([], config.DEFAULT_MODEL_TOOL_FREE),
-    ("read", config.DEFAULT_MODEL_TOOLS),
-    ("edit", config.DEFAULT_MODEL_TOOLS),
-    ("all", config.DEFAULT_MODEL_TOOLS),
-    (["read_file"], config.DEFAULT_MODEL_TOOLS),
+@pytest.mark.parametrize("tools,uses_tools", [
+    ("none", False), ("", False), (None, False), ([], False),
+    ("read", True), ("edit", True), ("all", True), (["read_file"], True),
 ])
-def test_auto_picks_by_whether_the_task_has_tools(tools, expected):
-    assert config.default_model_for(tools) == expected
+def test_auto_picks_by_whether_the_task_has_tools(tools, uses_tools):
+    """A task with tools never gets a model that cannot call them; a tool-free one gets the general profile's pick."""
+    chosen = config.default_model_for(tools)
+    if uses_tools:
+        assert config.MODELS[chosen]["tools"], chosen
+    else:
+        assert chosen == config.default_model_for("none")
+
+
+def test_every_pick_outside_a_batch_lands_on_a_provider_this_machine_has_a_key_for(user_toml):
+    """Roles, the default panel and a bare `auto` pick from the benchmark plan over the keys this machine holds.
+    Before 2026-09-26 they took the evidence's cheapest alone: a machine with only a Groq key had its judge,
+    doubt and panel pinned to OpenRouter and DeepSeek models it could not call."""
+    from zswarm import panel
+
+    user_toml("groq", 'keys = ["gsk-test-only-groq-key-0123456789"]\n')
+    # every role but vision: that one needs a model with eyes, and Groq serves none
+    picks = [config.resolve_role(r) for r in config.ROLES if r != "vision"] + panel.panelists() + [
+        config.resolve_model(config.AUTO), config.default_model_for("none"), config.default_model_for("read")]
+    assert {config.provider_of(m) for m in picks} == {"groq"}, picks
 
 
 def test_cc_selects_only_verified_effort_and_anthropic_endpoints():
@@ -35,8 +47,8 @@ def test_cc_selects_only_verified_effort_and_anthropic_endpoints():
 
 def test_a_task_resolves_auto_by_its_tools(tmp_path):
     mk = lambda **kw: Task.from_dict({"prompt": "x", "cwd": str(tmp_path), **kw}, {}, 0)
-    assert mk(tools="none").model == config.DEFAULT_MODEL_TOOL_FREE
-    assert mk(tools="read").model == config.DEFAULT_MODEL_TOOLS
+    assert mk(tools="none").model == config.default_model_for("none")
+    assert mk(tools="read").model == config.default_model_for("read")
     # an explicitly named model or role always wins over AUTO
     assert mk(tools="read", model="groq-gpt-oss-20b").model == "groq-gpt-oss-20b"
     assert mk(tools="none", role="judge").model == config.resolve_role("judge")
@@ -45,7 +57,8 @@ def test_a_task_resolves_auto_by_its_tools(tmp_path):
 def test_resolve_model_auto_falls_back_to_the_tool_capable_default():
     """AUTO with no tools context must pick the model that can do BOTH kinds of work. gpt-oss cannot:
     it 400s on tool calls, and a 400 never fails over."""
-    assert config.resolve_model(config.AUTO) == config.DEFAULT_MODEL_TOOLS
+    assert config.resolve_model(config.AUTO) == config.default_model_for("read")
+    assert config.MODELS[config.resolve_model(config.AUTO)]["tools"]
 
 
 def test_the_tool_free_default_is_never_put_in_a_tool_using_route():
