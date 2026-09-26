@@ -58,7 +58,7 @@ zswarm ui             # open the console and paste a free API key
 | --- | --- |
 | **Many workers, one call** | `zswarm_run` takes a list of tasks, each with its own folder, tool set and optional JSON schema, and runs them concurrently. |
 | **It picks the model** | Leave the model on `auto`: each task gets the cheapest configured model whose published test scores meet its bar. |
-| **Starts on a free key** | Gemini, Groq, Cerebras and Mistral all have free tiers. Paste one key and it works. |
+| **Starts on a free key** | Gemini, Groq and Cerebras have free tiers that AUTO can use. Paste one key and it works. |
 | **Keys that look after themselves** | A rate-limited key rests, a key out of credit is set aside, a key the provider refuses is never kept. When a provider runs dry, tasks move to the next capable model instead of stopping. |
 | **Every call costed** | Each task records its model, time and price. The console charts spend per day, per provider and per model. A daily cap stops new work once it is reached. |
 | **Workers get only what you allow** | Each task names its tools: `none`, `read`, `edit` (files inside its folder) or `all` (adds a shell). |
@@ -171,7 +171,7 @@ keeps your comments.
 | Gemini | ✅ | Google's models; the vision default |
 | Groq | ✅ | very fast open models, daily limits |
 | Cerebras | ✅ | very fast open models, daily limits |
-| Mistral | ✅ | Mistral's own models |
+| Mistral | ✅ | Mistral's own models, reached by name: AUTO does not route to it |
 | DeepSeek | | direct, and prices halve off-peak |
 | OpenRouter | | one account, hundreds of models; a few are free |
 | Hugging Face | | a router to many open models; a small free monthly credit |
@@ -249,15 +249,21 @@ contributors, human or agent, are in [AGENTS.md](AGENTS.md).
   CLI tools' credentials. They are never logged, printed or returned: everything shows a fingerprint. Prefer
   environment variables? Leave `keys` out and set `<PROVIDER>_API_KEY`.
 - Prompts, and the files a worker reads, go to the provider that serves the task. Switch off any provider you do
-  not want your code sent to. A worker with `edit` changes files only inside its task's folder; `all` also gives
-  it a shell, and shell commands are not limited to that folder. Give each task the narrowest set that does the job.
+  not want your code sent to. A provider's free tier may keep what it is sent under its own terms: set
+  `ZSWARM_REDACT_FREE_TIER=on` to mask secrets, email addresses and card numbers in tasks sent to free tiers, or use a
+  paid key for private code.
+- A worker with `edit` changes files only inside its task's folder (plus any extra `roots` the task lists); `all`
+  also gives it a shell, and shell commands are not limited to that folder. The optional `cc` backend (Claude Code
+  as the worker) needs `confirm_write` for either and is not held to the folder, so treat it like `all`. Give each
+  task the narrowest set that does the job.
 
 ## ❓ FAQ
 
 **What does it cost?**
 ZergSwarm itself is free. You pay each provider directly, or nothing on a free tier. A small task here uses about
 3,000 tokens and a big one about 50,000, so at $0.40 per million tokens a task costs a tenth of a cent to two
-cents. Every task's cost is in the console, and a daily cap stops new work once it is reached.
+cents. Every task's cost is in the console, and a daily cap you set (Routing & roles › Daily cap) stops new work
+once it is reached.
 
 **Which assistants does it work with?**
 Claude Code (the CLI, the IDE extensions and the desktop app's Code tab), Claude Desktop, and Codex (CLI, IDE
@@ -268,12 +274,14 @@ matter are in [docs/CLIENTS.md](docs/CLIENTS.md).
 No. Leave everything on `auto`. Star a model only if you want it tried first.
 
 **Can it change my files?**
-Only when a task asks for it. With `edit`, a worker changes files inside that task's folder and nowhere else. With
-`all` it also gets a shell, and a shell command can reach anything your user account can, so use `all` only for
-tasks that must run commands.
+Only when a task asks for it. With `edit`, a worker changes files only inside that task's folder (plus any extra
+`roots` it lists). With `all` it also gets a shell, and a shell command can reach anything your user account can,
+so use `all` only for tasks that must run commands. The optional `cc` backend needs `confirm_write` for either and
+is not held to the folder, so treat it like `all`.
 
 **Where does my data go?**
-To the provider serving each task, and nowhere else. The console and the ledger stay on your machine.
+To the provider serving each task, and nowhere else. The console and the ledger stay on your machine. A free tier
+may keep what it is sent, so for private code use a paid key or set `ZSWARM_REDACT_FREE_TIER=on`.
 
 ## 📄 License
 
