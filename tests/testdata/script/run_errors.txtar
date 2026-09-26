@@ -1,0 +1,27 @@
+# Handing run a prompt instead of a file names what the argument is and points at ask; nothing is sent.
+! zswarm run 'summarise the repo please'
+stderr 'is not a file. The argument is a PATH to a JSON tasks file'
+stderr 'zswarm ask "<prompt>"'
+
+# A file that is not JSON says so, with the parser's reason.
+! zswarm run broken.json
+stderr 'broken.json is not valid JSON'
+
+# A task with a field Task does not know is refused before anything runs.
+! zswarm run typo.json
+stderr 'unknown fields \[.promt.\]'
+api calls 0
+
+# A failed task makes the whole run exit non-zero and prints its error in place of an answer.
+api fail 'task exceeded 600s'
+! zswarm run tasks.json
+stdout '^=== t1 \[error\]'
+stdout '^task exceeded 600s$'
+api calls 1
+
+-- broken.json --
+[{"prompt": "x"
+-- typo.json --
+[{"prompt": "x", "promt": "y", "tools": "none"}]
+-- tasks.json --
+[{"prompt": "x", "tools": "none"}]

@@ -1,0 +1,18 @@
+# ask prints the answer on stdout and the model, seconds, cost and usage line on stderr.
+zswarm ask 'what is 2+2'
+stdout '^echo: what is 2\+2$'
+stderr '^-- \S+ \S+s \$0\.000000 usage='
+api calls 1
+
+# --json is the whole result as data.
+api reply four
+zswarm ask --json 'what is 2+2'
+stdout '"status": "ok"'
+stdout '"answer": "four"'
+! stdout '^-- '
+
+# A failed call exits non-zero and says why on stdout, in the [status] form.
+api fail 'deepseek API 400: bad request'
+! zswarm ask 'what is 2+2'
+stdout '^\[error\] deepseek API 400: bad request$'
+api calls 3

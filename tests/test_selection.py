@@ -1,0 +1,148 @@
+"""Published-evidence selection at the Task/plan boundary: offline, no keys but the ones a test writes."""
+from __future__ import annotations
+
+import pytest
+
+from zswarm import config, keys, selection
+from zswarm.jobs import JobManager
+from zswarm.spec import Task
+
+
+def _p(profile="general", **kw):
+    return selection.plan(profile, **kw)["candidates"]
+
+
+def test_profile_defaults_follow_tools_and_roles():
+    assert selection.profile_for(None, "none") == "general"
+    assert selection.profile_for(None, "all") == "code"
+    assert selection.profile_for("judge") == "decision"
+    assert selection.profile_for("search") == "research"
+    with pytest.raises(ValueError):
+        selection.profile_for("nonsense")
+
+
+def test_candidates_are_sorted_by_cost_and_meet_every_floor():
+    cands = _p("general")
+    assert cands, "general must have at least one route"
+    costs = [c["benchmark_cost_usd"] for c in cands if not c.get("unevidenced")]
+    assert costs == sorted(costs)
+    for c in cands:
+        for k, v in selection.PROFILES["general"].items():
+            assert c["scores"][k] >= v
+
+
+def test_a_saturated_models_siblings_are_its_last_unevidenced_legs(monkeypatch):
+    """2026-09-25: Gemini 3.8 Flash's per-model quota saturated and research had no other leg; its same-provider
+    siblings, rate-limited separately, now follow every evaluated candidate, marked unevidenced. A sibling still has
+    to fit the task: one whose file does not say it calls tools is no leg for a tool-using task (audit, 2026-09-26)."""
+    legs = _p("research", usable=lambda p: p == "gemini")
+    assert [c["model"] for c in legs] == ["rank:gemini-3-8-flash:direct", *config.MODELS["rank:gemini-3-8-flash:direct"]["siblings"]]
+    assert not legs[0].get("unevidenced") and all(c["unevidenced"] for c in legs[1:])
+    monkeypatch.delitem(config.MODELS["gemini-3.5-flash"], "tools")
+    assert "gemini-3.5-flash" not in [c["model"] for c in _p("research", tools="read", usable=lambda p: p == "gemini")]
+
+
+def test_exact_effort_is_preserved_not_approximated():
+    for c in _p("general", reasoning_effort="high"):
+        assert c["reasoning_effort"] == "high"
+        if not c.get("unevidenced"):  # a sibling carries its evaluated model's effort; it has no evidence of its own
+            assert config.MODELS[c["model"]]["default_reasoning_effort"] == "high"
+
+
+def test_critpt_is_never_an_eligibility_axis():
+    with pytest.raises(ValueError, match="CritPt"):
+        selection.plan("general", min_scores={"critpt": 0.1})
+    for c in _p("critical"):
+        assert "critpt" not in c["scores"]
+
+
+def test_unusable_provider_vision_context_and_cc_constraints():
+    base = _p("general")
+    prov = base[0]["provider"]
+    assert all(c["provider"] != prov for c in _p("general", usable=lambda p: p != prov))
+    assert _p("general", usable=lambda p: False) == []
+    for c in _p("general", vision=True):
+        assert config.MODELS[c["model"]].get("vision")
+    for c in _p("general", min_context=500_000):
+        assert config.MODELS[c["model"]]["ctx"] >= 500_000
+    for c in _p("code", tools="all", backend="cc"):
+        e = config.MODELS[c["model"]]
+        assert e.get("cc_effort") and config.PROVIDERS[e["provider"]].get("anthropic_url")
+    for c in _p("code", tools="all"):
+        assert config.MODELS[c["model"]].get("tools")
+    with pytest.raises(ValueError):
+        selection.plan("routine", tools="all")
+
+
+def test_exclusion_by_model_name():
+    first = _p("general")[0]["model"]
+    assert first not in [c["model"] for c in _p("general", exclude_models=[first])]
+
+
+def test_auto_task_gets_profile_and_cheapest_candidate(tmp_path):
+    t = Task(id="a", prompt="hi", cwd=str(tmp_path), tools="none")._normalised()
+    assert t.profile == "general"
+    assert t.model == _p("general")[0]["model"]
+
+
+def test_auto_pins_a_live_route_and_a_job_on_dead_pools_is_refused_at_submit(tmp_path):
+    """Jobs 20260925-184445-98ac and -184659-a701 (general, tools read): the evidence's cheapest route was OpenRouter
+    with all 4,287 keys disabled. Every pending task's record named it, and nothing refused a job whose pools were
+    all dead; the job sat `pending` instead."""
+    providers = list(dict.fromkeys(c["provider"] for c in _p("general", tools="read")))
+    assert len(providers) >= 2, providers
+    live = providers[-1]  # never the cheapest route's provider
+    config.SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    for p in providers:
+        (config.SECRETS_DIR / config.PROVIDERS[p]["key_files"][0]).write_text(f"sk-{p}-test-0001\n", encoding="utf-8")
+        if p != live:
+            keys.pool_for(p).disable(f"sk-{p}-test-0001", reason="out of credit")
+
+    task = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "read", "profile": "general"})
+    assert config.provider_of(task.model) == live, task.model
+
+    keys.pool_for(live).disable(f"sk-{live}-test-0001", reason="out of credit")
+    task = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "read", "profile": "general"})
+    with pytest.raises(ValueError, match="NoCapableSwarmRoute") as refused:
+        JobManager().submit([task])
+    assert f"{providers[0]} all 1 keys disabled" in str(refused.value), refused.value
+
+
+def test_auto_role_is_respected(tmp_path):
+    t = Task(id="j", prompt="hi", cwd=str(tmp_path), tools="none", role="judge")._normalised()
+    assert t.profile == "decision" and t.model == _p("decision")[0]["model"]
+
+
+def test_explicit_model_is_pinned_without_profile(tmp_path):
+    name = _p("general")[-1]["model"]
+    t = Task(id="p", prompt="hi", cwd=str(tmp_path), tools="none", model=name)._normalised()
+    assert t.profile is None and t.model == config.resolve_model(name)
+
+
+@pytest.mark.parametrize("field,value", [("api_id", "another/model"), ("default_reasoning_effort", "low")])
+def test_overlaid_identity_cannot_inherit_published_scores(monkeypatch, field, value):
+    name = _p("general")[0]["model"]
+    monkeypatch.setitem(config.MODELS, name, {**config.MODELS[name], field: value})
+    assert name not in [c["model"] for c in _p("general")]
+
+
+def test_direct_routes_still_have_evidence():
+    assert {c["provider"] for c in _p("general")} >= {"openrouter", "deepseek", "gemini"}
+
+
+def test_pinned_ranked_configuration_keeps_its_effort_default(tmp_path):
+    name = "rank:claude-opus-5-5"
+    task = Task.from_dict({"prompt": "x", "model": name, "profile": "general", "cwd": str(tmp_path)})
+    assert task.model == name and task.profile is None
+    assert task.reasoning_effort is None  # the client supplies the registry's max, never legacy low
+
+
+# Contract: when no tested model's provider can serve, a model its file marks `backup` on a provider that can is
+# offered last, marked unevidenced, and never for a critical task. Regression: an empty plan while working keys sit
+# idle (2026-09-26: every tested route down, 1,115 Cohere keys unused, other chats pinning models by hand).
+def test_a_backup_serves_when_every_tested_route_is_down(user_toml):
+    user_toml("cohere", "[models.command-a]\nbackup = true\n")
+    legs = _p("code", tools="read", usable=lambda p: p == "cohere")
+    assert [c["model"] for c in legs] == ["command-a"] and legs[0]["unevidenced"] and legs[0]["backup"]
+    assert _p("critical", tools="read", usable=lambda p: p == "cohere") == []
+    assert not any(c.get("backup") for c in _p("code", tools="read", usable=lambda p: p != "cohere"))

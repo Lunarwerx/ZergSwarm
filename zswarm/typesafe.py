@@ -1,0 +1,148 @@
+"""TypeSafe's Jev: a "System One" model that answers TYPED questions - pick one option, yes/no, rate on a
+scale - with a probability for every answer, in about 0.15 s. It cannot write text or use tools, so it is
+never a worker model; zswarm reaches it only through `zswarm_decide` (zswarm/decisions.py), where it answers
+first and anything it is unsure of goes to a generative model. Measured 2026-09-21: docs/BENCH-2026-09-21-jev.md.
+
+API: POST https://api.typesafe.ai/v1/systemone with a Bearer key and {state, model, questions: {id: question}};
+one answer comes back per question id. Price $0.042 per million INPUT tokens, output free. Limits (2026-09-21,
+"adjusting dynamically"): 1,200 requests/min, 250k tokens/s, 64k tokens per request of which the state plus the
+longest question may use 32k. Keys: TYPESAFE_API_KEYS / TYPESAFE_API_KEY, or `.secrets/typesafe_api_keys` (one
+per line), or `keys = [...]` in ~/.zswarm/providers/typesafe.toml: the provider file (zswarm/providers/typesafe.toml)
+owns the address and the key sources, like every other provider's. A key is never printed or logged.
+
+The same client reaches Featherless's Simple Jev (github.com/featherless-ai/simple-jev): open models that answer
+through TypeSafe's own request and response shape (its /v1/systemone is an alias of /v1/classifier) by reading the
+next-token scores of the answer labels. Any model id starting `featherless-ai/` goes to the public demo, which
+needs no key, refuses a question over 2k tokens with a 422 (never truncates), and allows 2 requests a second per
+caller; every client of that host shares one pacer so several bench arms stay under the limit together.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from urllib.parse import urlsplit
+
+import httpx
+
+from . import config, egress
+
+URL = config.PROVIDERS["typesafe"]["base_url"] + "/systemone"
+MODEL = "jev-latest"
+USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
+RETRYABLE = {429, 500, 502, 503, 504, 529}
+KEY_DEAD = {401, 402, 403}  # a bad, unpaid or unpermitted key does not heal inside a run
+SIMPLE_JEV_PREFIX = "featherless-ai/"
+SIMPLE_JEV_DEMO_URL = "https://simple-jev-demo-api.featherless.ai/v1/systemone"
+SIMPLE_JEV_DEMO_INTERVAL = 0.5  # the demo's 2 requests/second
+_NEXT_SLOT: dict[str, float] = {}  # url -> earliest monotonic time the next request may start, shared by every client
+
+
+def is_typed_model(model: str) -> bool:
+    """A model that answers typed questions natively (Jev, or an open model behind Simple Jev), not a generative one."""
+    return model == "jev" or model.startswith(("jev-", SIMPLE_JEV_PREFIX))
+
+
+def load_keys() -> list[str]:
+    """Every TypeSafe key the provider file's sources hold: the environment, the user's file, a clone's .secrets/."""
+    return config.load_api_keys("typesafe")
+
+
+class Jev:
+    """Async client: round-robin over the key pool, backoff on limits and overload (honouring retry-after),
+    a key that answers 401/402/403 leaves the rotation for the life of this client."""
+
+    def __init__(self, keys: list[str] | None = None, concurrency: int = 16, timeout: float = 120.0, http: httpx.AsyncClient | None = None,
+                 *, url: str = URL, usd_per_input_token: float = USD_PER_INPUT_TOKEN, keyless: bool = False, min_interval: float = 0.0):
+        self.url, self.keyless, self.min_interval = url, keyless, min_interval
+        self.usd_per_input_token = usd_per_input_token
+        self.keys = [] if keyless else list(keys if keys is not None else load_keys())
+        self.sem = asyncio.Semaphore(concurrency)
+        self._http = http
+        self._own = http is None
+        self._timeout = timeout
+        self._i = 0
+        self.calls = 0
+
+    @classmethod
+    def for_model(cls, model: str, concurrency: int = 16, **kw) -> "Jev":
+        """The client that serves `model`: TypeSafe for jev-*, the keyless Featherless demo for featherless-ai/*."""
+        if model.startswith(SIMPLE_JEV_PREFIX):
+            return cls(concurrency=min(concurrency, 2), url=SIMPLE_JEV_DEMO_URL, usd_per_input_token=0.0, keyless=True,
+                       min_interval=SIMPLE_JEV_DEMO_INTERVAL, **kw)
+        return cls(concurrency=concurrency, **kw)
+
+    @property
+    def usable(self) -> bool:
+        return self.keyless or bool(self.keys)
+
+    async def _pace(self) -> None:
+        """Hold this request until the endpoint's next free slot. No await sits between reading and booking the
+        slot, so concurrent tasks on one event loop can never take the same one."""
+        if self.min_interval <= 0:
+            return
+        now = time.monotonic()
+        slot = max(now, _NEXT_SLOT.get(self.url, 0.0))
+        _NEXT_SLOT[self.url] = slot + self.min_interval
+        if slot > now:
+            await asyncio.sleep(slot - now)
+
+    async def __aenter__(self) -> "Jev":
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=httpx.Timeout(self._timeout))
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        if self._own and self._http is not None:
+            await self._http.aclose()
+
+    def _key(self) -> str | None:
+        if self.keyless:
+            return ""
+        if not self.keys:
+            return None
+        self._i = (self._i + 1) % len(self.keys)
+        return self.keys[self._i]
+
+    async def ask(self, state, questions: dict, model: str = MODEL, attempts: int = 7) -> dict:
+        """{"status": "ok", answers, secs, in, out, model, cost_usd} or {"status": "error", error, http}."""
+        last: dict = {"status": "error", "error": "no usable TypeSafe key (TYPESAFE_API_KEY or .secrets/typesafe_api_keys)", "http": None}
+        body = {"state": state, "model": model, "questions": questions}
+        # Serialised once so the egress receipt hashes the exact bytes that leave (egress.py).
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        sink = f"typesafe:{urlsplit(self.url).hostname}"
+        for attempt in range(attempts):
+            key = self._key()
+            if key is None:
+                return last
+            async with self.sem:
+                await self._pace()
+                t0 = time.perf_counter()
+                egress.record(sink, payload, provider="typesafe", model=model)  # fail-closed raises here, unsent
+                try:
+                    headers = {"Content-Type": "application/json", **({} if self.keyless else {"Authorization": f"Bearer {key}"})}
+                    resp = await self._http.post(self.url, content=payload, headers=headers)
+                except httpx.HTTPError as e:
+                    resp, last = None, {"status": "error", "error": f"{type(e).__name__}: {e}"[:200], "http": None}
+                secs = time.perf_counter() - t0
+                self.calls += 1
+            if resp is not None and resp.status_code == 200:
+                data = resp.json()
+                usage = data.get("usage") or {}
+                tin = int(usage.get("input_tokens") or 0)
+                return {"status": "ok", "answers": data.get("answers") or {}, "secs": secs, "in": tin, "out": int(usage.get("output_tokens") or 0),
+                        "model": data.get("model") or model, "cost_usd": tin * self.usd_per_input_token}
+            if resp is not None:
+                last = {"status": "error", "error": f"HTTP {resp.status_code}: {resp.text[:180]}", "http": resp.status_code}
+                if resp.status_code in KEY_DEAD:
+                    if self.keyless:
+                        return last  # no key to rotate: a keyless endpoint that refuses us keeps refusing
+                    self.keys = [k for k in self.keys if k != key]
+                    continue
+                if resp.status_code not in RETRYABLE:
+                    return last  # a 422 is a malformed question: resending it unchanged fails the same way
+                ra = resp.headers.get("retry-after")
+                await asyncio.sleep(float(ra) if ra and ra.replace(".", "", 1).isdigit() else min(2 * 2 ** attempt, 60))
+            else:
+                await asyncio.sleep(min(2 * 2 ** attempt, 60))
+        return last

@@ -1,0 +1,13 @@
+# A missing argument, an unknown verb or a bad choice is argparse's error, and nothing reaches the api.
+! zswarm ask
+stderr 'the following arguments are required: prompt'
+! zswarm frobnicate
+stderr 'invalid choice: .frobnicate.'
+! zswarm ask --effort extreme 'hi'
+stderr 'invalid choice: .extreme.'
+! zswarm run tasks.json --backend gpu
+stderr 'invalid choice: .gpu.'
+api calls 0
+
+-- tasks.json --
+[{"prompt": "x", "tools": "none"}]

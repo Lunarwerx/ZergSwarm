@@ -1,0 +1,52 @@
+[project]
+name = "zergswarm"
+version = "0.2.0"
+description = "ZergSwarm (zswarm): give your coding agent a swarm of cheap LLM workers. MCP server, CLI and web console for Claude Code, Claude Desktop and Codex."
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28.1", "jsonschema>=4.23", "mcp>=2.2.0", "tomlkit>=0.13"]
+
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.urls]
+Homepage = "https://github.com/Lunarwerx/ZergSwarm"
+Issues = "https://github.com/Lunarwerx/ZergSwarm/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0"]
+
+[project.scripts]
+zswarm = "zswarm.cli:main"
+
+# ⛔ DECLARED EXPLICITLY, because auto-discovery cannot work here and fails CLOSED. setuptools
+# looks for ONE top-level package and finds several candidates - `zswarm/` beside `bench/`,
+# `native/`, `scripts/`, `tests/` and a `zswarm.py` entry script of the same name - so it refuses
+# the build outright rather than guess. The result was that `pip install -e .` did not work in
+# this repo AT ALL (found 2026-09-18, when Odin's dependency bumper reported it could not build a
+# baseline here and skipped the repo; the same failure hit launchpad).
+#
+# `zswarm.py` at the root stays a script, never a module: it exists so `python zswarm.py <cmd>`
+# works in a bare clone, and shipping it as a top-level module would collide with the `zswarm`
+# package it imports.
+[tool.setuptools.packages.find]
+include = ["zswarm*"]
+
+# The built-in bash output filters and the worker shell policy's rules are data beside the modules that load
+# them (outfilters.py, shellpolicy.py), and the review roster is markdown the `review` verb reads at run time;
+# a non-editable install must carry them all.
+[tool.setuptools.package-data]
+zswarm = ["data/*.json", "data/*.md", "outfilters.toml", "shell_rules.toml", "reviewers/*.md", "providers/*.toml", "ui/*.html", "ui/*.js"]
+
+[tool.pytest.ini_options]
+# ⛔ testpaths IS LOAD-BEARING, not tidiness. `bench/out/` is this repo's benchmark OUTPUT
+# tree (gitignored, 0 tracked files): every run writes a sandbox per task per model, and a task
+# IS a stub that raises NotImplementedError until a worker implements it. A bare `pytest` walked
+# those sandboxes and collected 2,198 errors, so this repo's gate read RED for a reason that has
+# nothing to do with its code - and a red-before gate is not watched by Odin's dependency sweep
+# at all, so the bumps of 2026-09-20 were taken with this leg dark. tests/ alone is 249 green.
+testpaths = ["tests"]
+# A belt for the braces: someone running `pytest bench/` by hand, or a future testpaths edit,
+# should still not collect generated benchmark sandboxes.
+norecursedirs = ["bench/out", ".venv", "build", "dist"]
+asyncio_mode = "auto"
+markers = ["live: hits the DeepSeek API (costs money, needs a key)"]

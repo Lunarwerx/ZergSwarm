@@ -1,0 +1,23 @@
+# run takes a PATH to a tasks file; each answer is printed under its task id, the job line on stderr.
+zswarm run tasks.json
+stdout '^=== t1 \[ok\]'
+stdout '^echo: count the files$'
+stdout '^=== second \[ok\]'
+stderr '^job \S+: 2 tasks$'
+stderr '^done in .* cost=\$0\.0000'
+api calls 2
+
+# --out writes the job record as JSON and prints no answers unless --print is also given.
+zswarm run tasks.json --out job.json --quiet
+exists job.json
+grep '"label": "tasks"' job.json
+grep '"answer": "echo: name the entry point"' job.json
+! stdout '==='
+stderr '^wrote job.json$'
+zswarm run tasks.json --out job.json --print --label again
+stdout -count=2 '^=== '
+grep '"label": "again"' job.json
+
+-- tasks.json --
+{"defaults": {"tools": "none"},
+ "tasks": [{"prompt": "count the files"}, {"id": "second", "prompt": "name the entry point"}]}

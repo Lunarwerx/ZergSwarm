@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+/tmp/
+/bench/out/
+native/bin/
+native/zscan-rs/target/
+# keys never live in a clone: they belong in ~/.zswarm/providers/<provider>.toml (zswarm ui, zswarm keys add)
+.secrets/
+.claude/
