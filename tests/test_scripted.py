@@ -19,7 +19,7 @@ from zswarm.spec import Result, Task  # noqa: E402
 
 needs_git_bash = pytest.mark.skipif(shutil.which("git") is None or find_bash() is None, reason="needs git and a working bash")
 
-RENAME = "sed -i 's/old_name/new_name/g' app.py\nprintf 'new_name\\n' > NAMES.txt"
+RENAME = "perl -pi -e 's/old_name/new_name/g' app.py\nprintf 'new_name\\n' > NAMES.txt"
 
 
 def git(repo: Path, *args: str) -> str:
@@ -58,9 +58,9 @@ def test_check_range_replays_scripted_commits_and_rejects_hand_edits_and_stray_m
     repo = make_repo(tmp_path)
     run_script(repo, RENAME)
     commit_all(repo, scripted_message("scripted-diff: rename old_name", RENAME))
-    run_script(repo, "sed -i 's/new_name/newer/g' app.py")
+    run_script(repo, "perl -pi -e 's/new_name/newer/g' app.py")
     (repo / "app.py").write_text((repo / "app.py").read_text(encoding="utf-8") + "# hand edit\n", encoding="utf-8", newline="\n")
-    commit_all(repo, scripted_message("scripted-diff: rename new_name", "sed -i 's/new_name/newer/g' app.py"))
+    commit_all(repo, scripted_message("scripted-diff: rename new_name", "perl -pi -e 's/new_name/newer/g' app.py"))
     (repo / "README").write_text("x\n", encoding="utf-8")
     commit_all(repo, scripted_message("docs: add readme", "true"))
 
