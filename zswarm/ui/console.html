@@ -6,20 +6,21 @@
 <title>ZergSwarm · Explorer</title>
 <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
 <style>
-:root{--bg:#f6f6f7;--sf:#fff;--bd:#e4e4e7;--bd2:#efeff1;--tx:#18181b;--t2:#52525b;--t3:#63636b;--ac:#2563eb;--acs:rgba(37,99,235,.09);--ok:#16a34a;--warn:#d97706;--okt:#15803d;--warnt:#b45309;--swoff:#8e8e96;--bad:#cf2f45;--badtx:#cf2f45;--off:#a1a1aa;--hov:#f2f2f4;--tw:300px;--flash:color-mix(in srgb,var(--ac) 22%,transparent);--e:cubic-bezier(.2,.7,.3,1);--d1:120ms;--d2:180ms;--d3:220ms;interpolate-size:allow-keywords}
-@media (prefers-color-scheme:dark){:root{--badtx:#f2737f;--bg:#0a0a0a;--sf:#141414;--bd:#262626;--bd2:#1f1f1f;--tx:#ededed;--t2:#a1a1aa;--t3:#8b8b94;--ac:#3b82f6;--acs:rgba(59,130,246,.15);--off:#52525b;--hov:#1b1b1b;--okt:var(--ok);--warnt:var(--warn);--swoff:#6b6b73}}
-/* chart roles. Status is the same green/amber/red the chips and dots wear (one color per status); the one series hue is the accent.
+:root{--bg:#f6f6f7;--sf:#fff;--bd:#e4e4e7;--bd2:#efeff1;--tx:#18181b;--t2:#52525b;--t3:#63636b;--ac:#18181b;--acs:rgba(24,24,27,.07);--acfg:#fff;--ok:#16a34a;--warn:#d97706;--okt:#15803d;--warnt:#b45309;--swoff:#8e8e96;--bad:#cf2f45;--badtx:#cf2f45;--off:#a1a1aa;--hov:#f2f2f4;--tw:300px;--flash:color-mix(in srgb,var(--ac) 22%,transparent);--e:cubic-bezier(.2,.7,.3,1);--d1:120ms;--d2:180ms;--d3:220ms;interpolate-size:allow-keywords}
+@media (prefers-color-scheme:dark){:root{--badtx:#f2737f;--bg:#0a0a0a;--sf:#141414;--bd:#262626;--bd2:#1f1f1f;--tx:#ededed;--t2:#a1a1aa;--t3:#8b8b94;--ac:#ededed;--acs:rgba(255,255,255,.09);--acfg:#0a0a0a;--off:#52525b;--hov:#1b1b1b;--okt:var(--ok);--warnt:var(--warn);--swoff:#6b6b73}}
+/* chart roles. Status is the same green/amber/red the chips and dots wear (one color per status); the one series colour is the accent, the logo's black or white.
    Avatars are neutral tints only. The ordinal ramp (key tiers) runs dark-to-light on light, light-to-dark on dark: tier 1 is always the strongest.
    Every light-mode mark role holds at least 3:1 on the white card. */
-:root{--v-s1:var(--ac);--v-ok:var(--ok);--v-warn:var(--warn);--v-bad:var(--bad);--v-de:#8e8e96;--v-fr:#3d87e0;--v-grid:#ededf0;--v-base:#d4d4d8;
-  --v-t1:#1c5cab;--v-t2:#2a78d6;--v-t3:#3d87e0;--v-t4:#5a93dc;--av0:#ececee;--av1:#e7e7e4;--av2:#e6e8eb;--av3:#efeeea;--avt:#3f3f46}
-@media (prefers-color-scheme:dark){:root{--v-de:#6b6b73;--v-fr:#6da7ec;--v-grid:#232323;--v-base:#3a3a3a;
-  --v-t1:#9ec5f4;--v-t2:#6da7ec;--v-t3:#3987e5;--v-t4:#256abf;--av0:#262626;--av1:#2a2a28;--av2:#25272b;--av3:#2c2b28;--avt:#d4d4d8}}
+:root{--v-s1:var(--ac);--v-ok:var(--ok);--v-warn:var(--warn);--v-bad:var(--bad);--v-de:#8e8e96;--v-fr:#18181b;--v-grid:#ededf0;--v-base:#d4d4d8;
+  --v-t1:#18181b;--v-t2:#3f3f46;--v-t3:#5f5f68;--v-t4:#8b8b94;--av0:#ececee;--av1:#e7e7e4;--av2:#e6e8eb;--av3:#efeeea;--avt:#3f3f46}
+@media (prefers-color-scheme:dark){:root{--v-de:#6b6b73;--v-fr:#ededed;--v-grid:#232323;--v-base:#3a3a3a;
+  --v-t1:#f4f4f5;--v-t2:#c4c4cc;--v-t3:#9a9aa3;--v-t4:#71717a;--av0:#262626;--av1:#2a2a28;--av2:#25272b;--av3:#2c2b28;--avt:#d4d4d8}}
 *{box-sizing:border-box}
 html,body{height:100%;height:100dvh;margin:0}
 body{font:13.5px/1.45 -apple-system,"Segoe UI",Inter,Roboto,sans-serif;background:var(--bg);color:var(--tx);display:flex;flex-direction:column;font-variant-numeric:tabular-nums;overflow:hidden}
 .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",monospace;font-size:12px}
 a{color:var(--ac);text-decoration:none}
+:is(p,li,.hint,.muted,.lead) a:not(.b){text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:2px}
 a:focus-visible,summary:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px}
 .sr{position:absolute;top:0;left:0;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip:focus{position:fixed;left:8px;top:8px;width:auto;height:auto;clip:auto;z-index:60;background:var(--sf);padding:6px 10px;border:1px solid var(--ac);border-radius:5px}
@@ -36,7 +37,7 @@ select.fit{max-width:min(420px,100%);min-width:0;text-overflow:ellipsis}select.r
 .b{display:inline-flex;align-items:center;justify-content:center;gap:6px;vertical-align:middle}.b .ic{width:15px;height:15px}.b.p{font-weight:500}
 .b:active:not(:disabled){background:var(--hov);transform:translateY(1px);transition-duration:0s}
 .b:disabled,.b[aria-disabled=true]{opacity:.45;cursor:default}
-.b.p{background:var(--ac);border-color:var(--ac);color:#fff}.b.p:active:not(:disabled){background:var(--ac);filter:brightness(.94)}
+.b.p{background:var(--ac);border-color:var(--ac);color:var(--acfg)}.b.p:active:not(:disabled){background:var(--ac);filter:brightness(.94)}
 .b.x{color:var(--badtx)}.b.i{padding:3px 7px}
 .b[aria-busy=true]{cursor:progress;opacity:.7;transition:opacity var(--d1) var(--e) 150ms}
 .sw{position:relative;display:inline-block;width:30px;height:17px;vertical-align:middle;flex:none}
