@@ -25,12 +25,9 @@ Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI mo
 <br/>
 <br/>
 
-<a href="https://github.com/Lunarwerx/ZergSwarm">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/console-provider-dark.png">
-    <img src="docs/img/console-provider-light.png" alt="The ZergSwarm console: a provider's keys, its use over two weeks, and its models with their prices" width="880">
-  </picture>
-</a>
+<img src="docs/img/how-it-works.gif" alt="Your agent has 12 boring jobs; ZergSwarm hands them to 12 cheap AI workers that all work at once; the answers come back checked: 12 jobs, 69 seconds, 30 cents, none of it on a Claude plan" width="880">
+
+<sub>A real run: 12 review jobs on one cheap model (Qwen 3.8 27B through Groq), all at once. 69 seconds and $0.30, none of it on a Claude plan.</sub>
 
 </div>
 
@@ -38,6 +35,8 @@ Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI mo
 
 Your main agent is expensive and does one thing at a time. Most of what it spends its day on is wide and
 repetitive: read sixty files and report on each, check every call site, summarize every log, grade every answer.
+Today it grinds through that alone, or spins up subagents that still run on your Claude plan. ZergSwarm is for
+people who use Claude Code, Claude Desktop or Codex every day and would rather spend that plan on the thinking.
 
 **ZergSwarm** takes that part. It is an MCP server, a CLI and a local web console. Your agent hands it a batch of
 tasks; it runs them all at once on the cheapest models that are good enough for the job (Gemini, Groq, Cerebras,
@@ -262,8 +261,14 @@ contributors, human or agent, are in [AGENTS.md](AGENTS.md).
 **What does it cost?**
 ZergSwarm itself is free. You pay each provider directly, or nothing on a free tier. A small task here uses about
 3,000 tokens and a big one about 50,000, so at $0.40 per million tokens a task costs a tenth of a cent to two
-cents. Every task's cost is in the console, and a daily cap you set (Routing & roles › Daily cap) stops new work
+cents. Every task's cost is in the console, and a daily cap you set (Routing & roles › Daily cap; there is none until you do) stops new work
 once it is reached.
+
+**How is this different from Claude Code's own subagents?**
+Subagents run on Claude, so they draw on your Claude plan or bill. ZergSwarm workers run on other companies'
+cheaper models, several with free tiers, so fanning out over fifty files costs cents and leaves your Claude limits
+for the hard parts. Use subagents when a job needs Claude-level reasoning, and ZergSwarm for the wide, repetitive
+parts.
 
 **Which assistants does it work with?**
 Claude Code (the CLI, the IDE extensions and the desktop app's Code tab), Claude Desktop, and Codex (CLI, IDE
