@@ -22,8 +22,17 @@ $userPathKind = if ($null -ne $userPath) { $reg.GetValueKind("Path") } else { $n
 $realClaude = Join-Path $env:USERPROFILE ".claude.json"
 # Read with Python: Windows PowerShell's ConvertFrom-Json refuses a file whose keys differ only by case, which a real
 # ~/.claude.json has (project folders spelled D:/ and d:/).
-function Entry { python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8')).get('mcpServers', {}).get('zswarm'), sort_keys=True))" $realClaude }
+# A missing or unreadable file says so, so the before/after comparison never matches two empty reads.
+function Entry {
+    if (-not (Test-Path $realClaude)) { return "absent" }
+    $out = python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8')).get('mcpServers', {}).get('zswarm'), sort_keys=True))" $realClaude 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $out) { return "unreadable " + [guid]::NewGuid() } else { return $out }
+}
 $realEntry = Entry
+# Every process variable as it was: the finally puts them all back, so running this inside an open PowerShell window
+# (`& scripts/installer_smoke.ps1`) leaves that window's environment as it found it.
+$envBefore = @{}
+Get-ChildItem Env: | ForEach-Object { $envBefore[$_.Name] = $_.Value }
 $installer = @("public\install.ps1", "install.ps1") | ForEach-Object { Join-Path $Repo $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
 try {
     $env:USERPROFILE = $H; $env:HOME = $H
@@ -52,5 +61,7 @@ try {
     # Put back exactly what was there: the same value and kind, or no user PATH at all (an empty one would hide the machine's).
     if ($null -ne $userPath) { Set-ItemProperty -Path "HKCU:\Environment" -Name Path -Value $userPath -Type $userPathKind }
     else { Remove-ItemProperty -Path "HKCU:\Environment" -Name Path -ErrorAction SilentlyContinue }
+    Get-ChildItem Env: | Where-Object { -not $envBefore.ContainsKey($_.Name) } | ForEach-Object { [Environment]::SetEnvironmentVariable($_.Name, $null, "Process") }
+    foreach ($k in $envBefore.Keys) { [Environment]::SetEnvironmentVariable($k, $envBefore[$k], "Process") }
     "real ~/.claude.json zswarm entry unchanged: " + ((Entry) -eq $realEntry) + "; user PATH restored; sandbox left at $T"
 }
