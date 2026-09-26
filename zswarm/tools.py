@@ -561,7 +561,8 @@ class Sandbox:
         elif kind == "edit_file":
             if old_string is None or new_string is None:
                 raise ValueError("kind edit_file needs old_string and new_string")
-            text = self.resolve(path, must_exist=True).read_text(encoding="utf-8", newline="")
+            with self.resolve(path, must_exist=True).open(encoding="utf-8", newline="") as f:  # read_text(newline=) is 3.13+
+                text = f.read()
             n = text.count(old_string)
             if n == 0:
                 raise ValueError("old_string not found in file (match must be exact, including whitespace)")
@@ -580,7 +581,8 @@ class Sandbox:
         path = self.spill_dir / f"{handle}.txt"
         if not path.is_file():
             raise FileNotFoundError(f"spilled output {handle} is gone (kept {config.SPILL_RETENTION_S // 86400} days); run the call again")
-        text = path.read_text(encoding="utf-8", errors="replace", newline="")
+        with path.open(encoding="utf-8", errors="replace", newline="") as f:  # read_text(newline=) is 3.13+
+            text = f.read()
         lo = max(0, min(int(start or 0), len(text)))
         hi = len(text) if end is None else max(lo, min(int(end), len(text)))
         # Leave room for the continuation note so _cap never spills a fetch again.

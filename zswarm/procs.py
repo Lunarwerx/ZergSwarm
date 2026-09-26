@@ -243,7 +243,11 @@ def kill_tree(pid: int) -> None:
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATE_NO_WINDOW)
         return
     try:
-        os.killpg(os.getpgid(pid), 9)
+        group = os.getpgid(pid)
+        if group == os.getpgrp():  # a child left in our own group: killing the group would kill this process too
+            os.kill(pid, 9)
+        else:
+            os.killpg(group, 9)
     except Exception:
         try:
             os.kill(pid, 9)

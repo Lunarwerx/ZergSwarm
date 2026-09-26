@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from zswarm import blobs  # noqa: E402
@@ -48,6 +50,7 @@ def test_crlf_and_every_newline_shape_survives_the_round_trip(tmp_path):
         assert hashlib.sha1(p.read_bytes()).hexdigest() == p.stem
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the damage is Windows text mode turning \\n into \\r\\n; POSIX text mode never translates")  # floor-ok: POSIX cannot produce the damage this repairs
 def test_repair_recovers_blobs_written_by_the_old_translating_writer(tmp_path):
     import hashlib
 

@@ -547,6 +547,10 @@ function modelOpts(list, sel) {
     return `<optgroup label="${esc(p + nk)}">${by.get(p).map((m) => `<option value="${esc(m.name)}"${m.name === sel ? " selected" : ""}>${esc((m.label || m.name) + nk)}</option>`).join("")}</optgroup>` }).join("");
 }
 const tbl = (h) => `<div class="tscroll">${h}</div>`;
+// A long table shows its first FOLD rows and a "Show all" button that toggles to "Show fewer"; k names the table in SHOWALL.
+const FOLD = 5;
+const folded = (k, rows) => SHOWALL.has(k) ? rows : rows.slice(0, FOLD);
+const foldBtn = (k, n, noun) => n <= FOLD ? "" : `<div style="margin-top:6px">${btn(SHOWALL.has(k) ? "Show fewer" : `Show all ${num(n)} ${noun}`, "showAll", { k })}</div>`;
 const skel = (n, label) => `<div class="sk" role="status" aria-label="${esc(label)}">${"<i></i>".repeat(n)}</div>`;
 
 /* ---------- icons, avatars, status chips ---------- */
@@ -1312,8 +1316,8 @@ function dProviders() {
   return page([["Providers"]], "Providers", { pic: pic("provider"), lead: fresh ? "A provider is a company that runs AI models. Pick one, get a key from its site, and paste it on its page here. The key stays on this computer." : "Each provider keeps a pool of keys. Switching a provider off removes it from every route without deleting its keys.",
     // First visit: the cards below are the way in; adding a custom endpoint and probing balances wait until there are keys.
     main: fresh ? btn(bi("add", "Add your own endpoint"), "sel", { id: "new/provider" }) : btn(bi("spend", "Probe every balance"), "probe", {}, "", 'title="Check each balance (free)"') + btn(bi("add", "Add provider"), "sel", { id: "new/provider" }, "p") },
-    cards + (fresh ? (t) => disc("allprov", `Every provider as a table <span class="muted">(${provs.length})</span>`, t) : (t) => sec("All providers", t))(tbl(`<table class="t cards"><tr><th>State</th><th>Provider</th><th class="r">Ready</th><th class="r" title="Rate-limited for now; retried automatically">Resting</th><th class="r">Disabled</th><th class="r">Keys</th><th>On</th></tr>${provs.map((p) =>
-      `<tr class="${p.enabled ? "" : "off"}"><td data-l="State" class="nw">${provChip(p)}</td><td class="c1">${pname(p.name, pid(p.name))} ${p.builtin ? "" : '<span class="tag">custom</span>'}</td><td class="r mono" data-l="Ready">${p.ready}</td><td class="r mono" data-l="Resting">${p.resting || 0}</td><td class="r mono" data-l="Disabled">${p.disabled || 0}</td><td class="r mono" data-l="Keys">${p.keys}</td><td data-l="On">${sw(p.enabled, "provEnabled", { p: p.name }, `Use provider ${p.name}`)}</td></tr>`).join("")}</table>`)));
+    cards + (fresh ? (t) => disc("allprov", `Every provider as a table <span class="muted">(${provs.length})</span>`, t) : (t) => sec("All providers", t))(tbl(`<table class="t cards"><tr><th>State</th><th>Provider</th><th class="r">Ready</th><th class="r" title="Rate-limited for now; retried automatically">Resting</th><th class="r">Disabled</th><th class="r">Keys</th><th>On</th></tr>${folded("provs", provs).map((p) =>
+      `<tr class="${p.enabled ? "" : "off"}"><td data-l="State" class="nw">${provChip(p)}</td><td class="c1">${pname(p.name, pid(p.name))} ${p.builtin ? "" : '<span class="tag">custom</span>'}</td><td class="r mono" data-l="Ready">${p.ready}</td><td class="r mono" data-l="Resting">${p.resting || 0}</td><td class="r mono" data-l="Disabled">${p.disabled || 0}</td><td class="r mono" data-l="Keys">${p.keys}</td><td data-l="On">${sw(p.enabled, "provEnabled", { p: p.name }, `Use provider ${p.name}`)}</td></tr>`).join("")}</table>`) + foldBtn("provs", provs.length, "providers")));
 }
 
 function keysTable(name) {
@@ -1321,7 +1325,7 @@ function keysTable(name) {
   if (!rows) return skel(4, "Loading keys");
   if (!Array.isArray(rows)) return `<p class="bad">${esc(rows.error)}</p>`;
   if (!rows.length) return `<p class="muted">No keys yet. Paste one above.</p>`;
-  const lim = SHOWALL.has(name) ? rows.length : 50, shown = rows.slice(0, lim), size = new Map();
+  const fk = "keys:" + name, shown = folded(fk, rows), size = new Map();
   for (const k of shown) size.set(k.priority ?? null, (size.get(k.priority ?? null) || 0) + 1);
   // Rows arrive in the order the pool reaches for them. Group labels show once some key has a number: with none, every key takes turns.
   // A single key has no order to explain.
@@ -1339,7 +1343,7 @@ function keysTable(name) {
     return head + `<tr class="${k.disabled ? "off" : ""}" data-k="${esc(fp)}">${many ? `<td data-l="Priority"><input id="${esc(id)}" class="mono in-pri" inputmode="numeric" autocomplete="off" placeholder="none" value="${esc(t ?? "")}" data-chg="keyPri"${da(o)} aria-label="${esc(`Priority number for key ${fp}`)}"${invalid(id)}>${ferr(id)}</td>` : ""}<td class="mono c1">${esc(k.masked)}</td><td class="mono" data-l="Fingerprint">${esc(fp)}</td><td class="${k.editable ? "muted" : "mono muted"}" style="font-size:11.5px" data-l="Source">${k.editable ? "added here" : esc(k.source)}</td><td data-l="State">${st}</td>
       <td data-l="On">${sw(!k.disabled, "keyOn", o, `Key ${fp} on`)}</td><td class="act">${btn("Check", "keyCheck", o, "", `aria-label="${esc(`Check key ${fp} with ${name}`)}" title="Ask ${esc(name)} whether it accepts this key (free)"`)}${k.editable ? btn("Remove", "keyRm", o, "x", `aria-label="${esc(`Remove key ${fp}`)}"`)
         : `<span class="muted" style="font-size:12px;margin-left:8px" title="${esc(`Comes from ${k.source || "outside your provider file"}; change it there`)}">read-only</span>`}</td></tr>`;
-  }).join("")}</table>`) + (rows.length > lim ? `<div style="margin-top:6px">${btn(`Show all ${rows.length} keys`, "keysAll", { p: name })}</div>` : "");
+  }).join("")}</table>`) + foldBtn(fk, rows.length, "keys");
 }
 function dProvider(name) {
   const p = Z.S.providers.find((x) => x.name === name);
@@ -1361,7 +1365,7 @@ function dProvider(name) {
       p.keys ? btn(bi("spend", "Probe balance"), "probe", o, "", 'title="Check the balance (free)"') + btn(bi("refresh", "Reload"), "keysReload", o) : "") +
     sec("Use", useFig("pu-" + hnum(name).toString(36), Z.S.models.filter((m) => m.provider === name).map((m) => m.name), chw(1)) + perModelFig("pm-" + hnum(name).toString(36), name, chw(1))) +
     sec(`Models <span class="muted">(${nModels})</span>`, `<p class="hint" style="margin:0 0 6px">ZergSwarm picks among these by itself for each task, so there is nothing to choose here: leave them on. <b>AUTO</b> marks the ones with published test scores; the others step in when those are busy.</p>` +
-      priceNote() + modelTable(Z.S.models.filter((m) => m.provider === name), Z.readyProviders(), () => `<p class="muted">No models for ${esc(name)} yet. ${link("Add one", "new/model")}</p>`, true), orderSel()) +
+      priceNote() + modelTable(Z.S.models.filter((m) => m.provider === name), Z.readyProviders(), () => `<p class="muted">No models for ${esc(name)} yet. ${link("Add one", "new/model")}</p>`, true, "models:" + name), orderSel()) +
     disc("provider", "Connection &amp; advanced", sec("Connection",
       prow("Base URL", `<input id="pv_url" class="mono w" value="${esc(p.base_url || "")}" data-chg="provBase"${da(o)}>`, "The part before /chat/completions. Saved when you leave the field.", "pv_url") +
       // Only http(s) becomes a link: esc() stops markup, not a javascript: URL.
@@ -1381,13 +1385,16 @@ function noMatch() {
   return `<p class="muted">No models match ${why.join(" and ")}. ${btn("Show every model", "mfAll")}</p>`;
 }
 // oneProv: the table sits on that provider's own page, so a Provider column would repeat its name on every row.
-function modelTable(list, rp, empty = noMatch, oneProv = false) {
+function modelTable(list, rp, empty = noMatch, oneProv = false, fk = "models") {
   if (!list.length) return empty();
+  // Even unfolded, a catalogue of hundreds stops at 300 rows: the filter narrows it.
+  const rows = orderModels(list), shown = folded(fk, rows).slice(0, 300);
   const free = new Set(Z.S.providers.filter((p) => p.free_tier).map((p) => p.name));
   // A free-tier model says so first: "free tier" beside a bare price read as a contradiction to every visitor (SUE, 2026-09-26).
   const cost = (m) => free.has(m.provider) && m.usd_per_1m != null ? `${chip("ok", "free", { title: `Free tier: nothing is charged until you pass the provider's free limits, then ${price(m)} per 1M tokens` })}<span class="muted"> then ${price(m)}</span>` : price(m);
-  return tbl(`<table class="t cards"><tr><th>On</th><th title="Starred models are tried first by AUTO, lowest number first">Priority</th><th>Model</th>${oneProv ? "" : "<th>Provider</th>"}<th>Kind</th><th class="r" title="${esc(PRICE_TIP)}">Price per 1M tokens</th><th class="r">Context</th></tr>${orderModels(list).slice(0, 300).map((m) =>
-    `<tr class="${m.enabled ? "" : "off"}"><td data-l="On">${sw(!m.switched_off, "modelOn", { m: m.name }, `Use model ${m.name}`)}</td><td data-l="Priority">${star(m)}</td><td class="c1">${link(m.label || m.name, mid(m))}</td>${oneProv ? "" : `<td data-l="Provider">${pname(m.provider)}</td>`}<td data-l="Kind">${mBadges(m, rp)}</td><td class="r mono nw" data-l="Price per 1M tokens">${cost(m)}</td><td class="r mono" data-l="Context">${ctxk(m)}</td></tr>`).join("")}</table>`) + (list.length > 300 ? `<p class="muted">${list.length - 300} more: filter to narrow.</p>` : "");
+  return tbl(`<table class="t cards"><tr><th>On</th><th title="Starred models are tried first by AUTO, lowest number first">Priority</th><th>Model</th>${oneProv ? "" : "<th>Provider</th>"}<th>Kind</th><th class="r" title="${esc(PRICE_TIP)}">Price per 1M tokens</th><th class="r">Context</th></tr>${shown.map((m) =>
+    `<tr class="${m.enabled ? "" : "off"}"><td data-l="On">${sw(!m.switched_off, "modelOn", { m: m.name }, `Use model ${m.name}`)}</td><td data-l="Priority">${star(m)}</td><td class="c1">${link(m.label || m.name, mid(m))}</td>${oneProv ? "" : `<td data-l="Provider">${pname(m.provider)}</td>`}<td data-l="Kind">${mBadges(m, rp)}</td><td class="r mono nw" data-l="Price per 1M tokens">${cost(m)}</td><td class="r mono" data-l="Context">${ctxk(m)}</td></tr>`).join("")}</table>`) + foldBtn(fk, rows.length, "models") +
+    (rows.length > shown.length && SHOWALL.has(fk) ? `<p class="muted">${rows.length - shown.length} more: filter to narrow.</p>` : "");
 }
 // The ranking stays in view without a page of its own: the starred models, in the order AUTO tries them.
 function starStrip() {
@@ -1410,7 +1417,7 @@ function dModels() {
 // Typed models (Jev) answer sub-questions for other tools and never run a task, so they sit apart from the rest.
 function helpers(rp) {
   const list = Z.S.models.filter((m) => m.kind === "typed");
-  return list.length ? sec("Helpers for sub-questions", `<p class="hint" style="margin:0 0 8px">${esc(TYPED)}</p>${modelTable(list, rp)}`) : "";
+  return list.length ? sec("Helpers for sub-questions", `<p class="hint" style="margin:0 0 8px">${esc(TYPED)}</p>${modelTable(list, rp, noMatch, false, "models:typed")}`) : "";
 }
 function dModel(name) {
   const S = Z.S, m = S.models.find((x) => x.name === name);
@@ -1461,7 +1468,7 @@ function dRouting() {
   const skipped = P && P.rejected ? P.rejected.filter((r) => pri[r.model]) : [];
   // A starred candidate shows its number: that is why it sits above cheaper ones.
   const prev = !P ? "" : P.running ? '<p class="muted pending">asking the selector…</p>' : `<div id="pv_out">${P.error && !P.candidates ? `<p class="bad">${esc(P.error)}</p>` : (P.candidates && P.candidates.length)
-    ? tbl(`<table class="t"><tr><th class="r">#</th><th>Model</th><th>Provider</th><th class="r" title="What the published test run cost on it: for comparing models, not your bill">Test-run cost</th></tr>${P.candidates.map((c, i) => `<tr><td class="r mono">${i + 1}</td><td>${esc(c.unevidenced ? c.model : lab(c.model))}${pri[c.model] ? ` <span class="tag ac" title="Starred: tried first, lowest number first">★${esc(pri[c.model])}</span>` : ""}${c.unevidenced ? ' <span class="muted sm">backup from the same provider, not tested itself</span>' : ""}</td><td>${pname(c.provider)}</td><td class="r mono">${Z.money(c.benchmark_cost_usd)}</td></tr>`).join("")}</table>`)
+    ? tbl(`<table class="t"><tr><th class="r">#</th><th>Model</th><th>Provider</th><th class="r" title="What the published test run cost on it: for comparing models, not your bill">Test-run cost</th></tr>${folded("cands", P.candidates).map((c, i) => `<tr><td class="r mono">${i + 1}</td><td>${esc(c.unevidenced ? c.model : lab(c.model))}${pri[c.model] ? ` <span class="tag ac" title="Starred: tried first, lowest number first">★${esc(pri[c.model])}</span>` : ""}${c.unevidenced ? ' <span class="muted sm">backup from the same provider, not tested itself</span>' : ""}</td><td>${pname(c.provider)}</td><td class="r mono">${Z.money(c.benchmark_cost_usd)}</td></tr>`).join("")}</table>`) + foldBtn("cands", P.candidates.length, "candidates")
     : '<p class="muted">Nothing can run yet: add a key for a provider that has tested models.</p>'}${skipped.length ? `<p class="hint">${skipped.map((r) => `★${esc(pri[r.model])} ${esc(lab(r.model))} was skipped: ${esc(r.reason)}.`).join(" ")}</p>` : ""}</div>`;
   return page([["Routing & roles"]], "Routing & roles", { pic: pic("route"), lead: "A <b>role</b> is a kind of work a task can ask for by name. Each is set to <b>auto</b> (ZergSwarm picks the model) unless you choose one. Most people leave them all on auto." },
     sec("Spending limit", prow("Daily cap, $", `<input id="cap" class="mono in-pri" inputmode="decimal" autocomplete="off" placeholder="none" value="${esc(O.daily_cap_usd ?? "")}" data-chg="optCap" aria-label="Daily spending cap in dollars">`,
@@ -1507,31 +1514,31 @@ curl -s -H "X-Zswarm-Token: $TOKEN" -H "Content-Type: application/json" \\
 }
 
 function counts(j) { return Object.entries(j.counts || {}).map(([k, v]) => num(v) + " " + k).join(", ") }
-const jobTable = (jobs) => tbl(`<table class="t cards"><tr><th>Job</th><th>Label</th><th>State</th><th>Tasks</th><th class="r">Cost</th><th>Created</th><th></th></tr>${jobs.map((j) =>
+const jobTable = (jobs, fk) => tbl(`<table class="t cards"><tr><th>Job</th><th>Label</th><th>State</th><th>Tasks</th><th class="r">Cost</th><th>Created</th><th></th></tr>${folded(fk, jobs).map((j) =>
   `<tr><td class="mono c1">${link(j.job_id, "jobs/" + enc(j.job_id))}</td><td data-l="Label">${esc(j.label || "")}</td><td data-l="State">${stateTag(j.state)}</td><td class="muted" data-l="Tasks">${esc(counts(j))}</td><td class="r mono" data-l="Cost">${esc(mon(j.cost_usd))}</td><td class="mono muted nw" data-l="Created">${esc(when(j.created))}</td><td class="act">${jobDot(j.state) === "run" ? btn("Cancel", "jobCancel", { id: j.job_id }, "x", `aria-label="${esc(`Cancel job ${j.label || j.job_id}`)}"`) : ""}</td></tr>`).join("")}</table>`);
 function dJobs() {
-  // The chart leads (cost and outcome of the last twelve); the full list follows, folded once it is long (on length alone, so a job
-  // finishing never snaps the list shut). Running jobs, with their Cancel buttons, stay above a folded list.
-  const runs = (JOBS || []).filter((j) => jobDot(j.state) === "run"), list = !JOBS || !JOBS.length ? "" : jobTable(JOBS);
+  // The chart leads (cost and outcome of the last twelve); the list follows, its first rows shown. Running jobs, with their Cancel
+  // buttons, stay above a list long enough to fold.
+  const runs = (JOBS || []).filter((j) => jobDot(j.state) === "run"), list = !JOBS || !JOBS.length ? "" : jobTable(JOBS, "jobs") + foldBtn("jobs", JOBS.length, "jobs");
   const two = CWF >= 720, w = chw(two ? 2 : 1), spent = USAGE && USAGE.days && USAGE.days.some((d) => +d.cost_usd > 0);
   return page([["Jobs"]], "Jobs", { pic: pic("jobs"), lead: "Every batch an agent (or this console) ran through the swarm, and what it cost. Jobs keep running in the server when this page closes.", main: btn(bi("refresh", "Reload"), "jobsReload") },
     (spent ? sec("Spend", `<div class="cgrid${two ? " two" : ""}">${spendFig(w)}${moneyFig(w)}</div>`) : "") +
     (!JOBS ? sec("Recent jobs", JOBS_ERR ? `<p class="bad">${ic("error")} Could not load the jobs: ${esc(JOBS_ERR)} ${btn("Reload", "jobsReload")}</p>` : skel(6, "Loading jobs"))
     : !JOBS.length ? sec("Recent jobs", `<div class="ch-empty">${ic("jobs", "l")}<div><b>No jobs yet</b><div class="sm">A batch an agent runs through the swarm shows up here with its cost and outcome.</div></div></div>`)
-    : jobsFig() + (JOBS.length > 12 ? (runs.length ? sec(`Running now <span class="muted">(${runs.length})</span>`, jobTable(runs)) : "") + disc("jobs", `All recent jobs <span class="muted">(${JOBS.length})</span>`, list)
-      : sec(`All recent jobs <span class="muted">(${JOBS.length})</span>`, list))));
+    : jobsFig() + (JOBS.length > FOLD && runs.length ? sec(`Running now <span class="muted">(${runs.length})</span>`, jobTable(runs, "jobs:run") + foldBtn("jobs:run", runs.length, "running jobs")) : "") +
+      sec(`All recent jobs <span class="muted">(${JOBS.length})</span>`, list)));
 }
 function dJob(id) {
   const j = (JOBS || []).find((x) => x.job_id === id) || { job_id: id }, D = JOBD[id];
   const res = D && D.results && D.results.results || [];
   const state = j.state || (D && D.status && D.status.state) || (D && typeof D.status === "string" ? D.status : "");
-  // A job can hold tens of thousands of tasks: the first 100 rows show, the rest on request, and an answer's full text is built only while it is open.
-  const lim = SHOWALL.has("job:" + id) ? res.length : 100;
+  // A job can hold tens of thousands of tasks: the first rows show, the rest on request, and an answer's full text is built only while it is open.
+  const fk = "job:" + id;
   const tasks = !D ? skel(3, "Loading task results") : D.error ? `<p class="bad">${ic("error")} ${esc(D.error)}</p>` : !res.length ? '<p class="muted">No task results yet.</p>' :
-    tbl(`<table class="t"><tr><th>Task</th><th>Status</th><th>Model</th><th class="r">Cost</th><th>Answer</th></tr>${res.slice(0, lim).map((t) => { const k = id + ":" + t.id, op = OPENDET.has(k);
+    tbl(`<table class="t"><tr><th>Task</th><th>Status</th><th>Model</th><th class="r">Cost</th><th>Answer</th></tr>${folded(fk, res).map((t) => { const k = id + ":" + t.id, op = OPENDET.has(k);
       return `<tr><td class="mono" style="vertical-align:top">${esc(t.id)}</td><td style="vertical-align:top">${t.status === "ok" ? chip("ok", "ok") : chip("bad", esc(t.status))}</td><td class="mono" style="font-size:12px;vertical-align:top">${esc(t.model || "")}</td><td class="r mono" style="vertical-align:top">${Z.money(t.cost_usd)}</td>
       <td><details class="lazy" data-k="${esc(k)}" ${op ? "open" : ""}><summary>${esc((t.answer || t.error || "").slice(0, 100) || "(empty)")}</summary><pre${op ? " data-built" : ""}>${op ? esc(t.data ? JSON.stringify(t.data, null, 2) : t.answer || t.error || "") : ""}</pre></details></td></tr>` }).join("")}</table>`) +
-    (res.length > lim ? `<div style="margin-top:6px">${btn(`Show all ${num(res.length)} tasks`, "jobAll", { id })}</div>` : "");
+    foldBtn(fk, res.length, "tasks");
   // Up to a dozen tasks, the per-task bars show at once; up to 50 they wait behind a disclosure; past that the table alone carries them.
   const perTask = taskFig(id, res), bars = !perTask ? "" : res.length <= 12 ? `<section>${perTask}</section>` : disc("jobtasks", `Time and cost per task <span class="muted">(${res.length})</span>`, perTask);
   return page([["Jobs", "jobs"], [j.label || id]], j.label || id, { pic: pic("jobs"), badges: state ? stateTag(state) : "", main: (jobDot(state) === "run" ? btn("Cancel job", "jobCancel", { id }, "x") : "") + btn(bi("refresh", "Reload"), "jobLoad", { id }) },
@@ -1730,8 +1737,7 @@ const ACT = {
     // The faded row leaves at once and the rest close the gap now, not after the round trip; the reload then fixes up the truth.
     PENDF = rowFocus("#keys tr[data-k]", "keyRm", idx, "#nk"); renderDetail();
     return run(async () => { try { await Z.removeKey(d.p, d.fp) } finally { reloadKeys(d.p) } }, "Key removed") },
-  keysAll: (d) => { SHOWALL.add(d.p); renderDetail() },
-  jobAll: (d) => { SHOWALL.add("job:" + d.id); renderDetail() },
+  showAll: (d) => { SHOWALL.has(d.k) ? SHOWALL.delete(d.k) : SHOWALL.add(d.k); renderDetail() },
   keysReload: (d) => reloadKeys(d.p),
   // SEL changes only once the remove succeeded; a failure leaves the page, the hash and the tree on the item.
   provRm: (d) => { if (confirm(`Remove provider ${d.p}? Its file goes, with its models and the keys in it.`)) return run(async () => { await Z.removeProvider(d.p); select("providers", { hist: "replace", focus: true }) }, "Provider removed") },

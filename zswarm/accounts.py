@@ -26,7 +26,7 @@ import json
 import os
 import re
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import config
 
@@ -112,6 +112,12 @@ def _shown_tier(account: str) -> str:
     return {"pro": "pro", "team": "team", "free": "free"}.get(tail, "")
 
 
+def _folder_name(path: str) -> str:
+    """The last folder of an AgentHydra path, lowercased. Its caches hold Windows paths, which Path on Linux or macOS
+    reads as one long name; PureWindowsPath splits on both slashes, so a POSIX path reads right as well."""
+    return PureWindowsPath(path).name.strip().lower()
+
+
 def _cached_tiers() -> dict[str, str]:
     """instance folder (lowercased) -> the tier AgentHydra last displayed for it. Used only where the account's
     rate-limit tier does not say, which is exactly where a personal org reads as `claude_free` but pays for Max."""
@@ -121,7 +127,7 @@ def _cached_tiers() -> dict[str, str]:
             continue
         tier = _shown_tier(str(entry.get("account") or ""))
         if tier:
-            out[Path(str(key)[len("desktop:"):]).name.strip().lower()] = tier
+            out[_folder_name(str(key)[len("desktop:"):])] = tier
     return out
 
 
@@ -133,7 +139,7 @@ def instances() -> dict[str, dict]:
     for path, entry in sorted(_read_json(HYDRA / "instances-cache.json").items()):
         if not isinstance(entry, dict) or not entry.get("uuid"):
             continue
-        label = Path(str(path)).name.strip().lower()
+        label = _folder_name(str(path))
         if not label:
             continue
         row = {"account": account_id(str(entry["uuid"])), "tier": better_tier(tier_of(entry), shown.get(label, ""))}

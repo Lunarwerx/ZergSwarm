@@ -17,6 +17,7 @@ import os
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -43,9 +44,24 @@ def _run_measured(cmd: list[str], stdin_text: str | None) -> dict:
         user, kernel, peak = _win_times(p._handle)  # the handle stays valid after exit, so the counters are final
         return {"wall": wall, "user": user, "sys": kernel, "peak_rss": peak, "code": p.returncode, "stdout": out.decode("utf-8", "replace"), "stderr": err.decode("utf-8", "replace")[-400:]}
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = p.communicate(stdin_text.encode("utf-8") if stdin_text is not None else None)
+    # The pipes drain on threads and wait4 reaps the child itself, returning that child's own rusage: communicate()
+    # would reap it first and leave wait4 no child to wait for (ChildProcessError on every Linux and macOS run).
+    got: dict[str, bytes] = {}
+    readers = [threading.Thread(target=lambda n=n, f=f: got.__setitem__(n, f.read())) for n, f in (("out", p.stdout), ("err", p.stderr))]
+    for t in readers:
+        t.start()
+    if stdin_text is not None:
+        try:
+            p.stdin.write(stdin_text.encode("utf-8"))
+        except BrokenPipeError:  # a child that exits without reading its input
+            pass
+        p.stdin.close()
+    _, status, ru = os.wait4(p.pid, 0)
+    p.returncode = os.waitstatus_to_exitcode(status)
+    for t in readers:
+        t.join()
+    out, err = got.get("out", b""), got.get("err", b"")
     wall = time.perf_counter() - t0
-    _, status, ru = os.wait4(p.pid, 0) if hasattr(os, "wait4") else (0, 0, None)
     return {"wall": wall, "user": ru.ru_utime if ru else 0.0, "sys": ru.ru_stime if ru else 0.0, "peak_rss": (ru.ru_maxrss * (1 if sys.platform == "darwin" else 1024)) if ru else 0,
             "code": p.returncode, "stdout": out.decode("utf-8", "replace"), "stderr": err.decode("utf-8", "replace")[-400:]}
 

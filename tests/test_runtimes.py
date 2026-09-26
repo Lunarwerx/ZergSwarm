@@ -163,14 +163,17 @@ class _LocalIsolate(Runtime):
 # on Windows it skips, so a Windows-only gate never exercises them.
 @pytest.mark.skipif(sys.platform == "win32" or not shutil.which("sh"), reason="Linux/macOS only: the in-isolate scripts need a POSIX sh and POSIX paths")
 def test_remote_tools_scripts_end_to_end(tmp_path):
-    sb = RemoteSandbox(_LocalIsolate("docker", "local"), tmp_path.as_posix())
+    # A folder of its own: tmp_path also holds the test's zswarm home, which list_dir would show.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    sb = RemoteSandbox(_LocalIsolate("docker", "local"), ws.as_posix())
     assert "wrote" in run(sb.run("write_file", {"path": "pkg/a.py", "content": "def f():\n    return 1\n"}))
     run(sb.run("write_file", {"path": "node_modules/x.py", "content": "def f(): pass\n"}))
     assert run(sb.run("read_file", {"path": "pkg/a.py"})).splitlines() == ["1\tdef f():", "2\t    return 1"]
     assert "1 replacement" in run(sb.run("edit_file", {"path": "pkg/a.py", "old_string": "return 1", "new_string": "return 2"}))
-    assert (tmp_path / "pkg" / "a.py").read_text() == "def f():\n    return 2\n"
+    assert (ws / "pkg" / "a.py").read_text() == "def f():\n    return 2\n"
     assert run(sb.run("list_dir", {"path": ".", "depth": 2})).splitlines() == ["pkg/", "  a.py"]
     assert run(sb.run("glob", {"pattern": "**/*.py"})) == "pkg/a.py"
     assert run(sb.run("grep", {"pattern": "return 2"})) == "pkg/a.py:2:    return 2"
     assert "FileNotFoundError" in run(sb.run("read_file", {"path": "nope.txt"}))
-    assert run(sb.run("bash", {"command": "pwd"})).splitlines() == ["exit=0", tmp_path.as_posix()]
+    assert run(sb.run("bash", {"command": "pwd"})).splitlines() == ["exit=0", ws.as_posix()]

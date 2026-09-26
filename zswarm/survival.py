@@ -56,7 +56,8 @@ def read_text(path: str | Path) -> str | None:
     try:
         if not p.is_file() or p.stat().st_size > MAX_BYTES:
             return None
-        return p.read_text(encoding="utf-8", newline="")
+        with p.open(encoding="utf-8", newline="") as f:  # Path.read_text(newline=) needs Python 3.13
+            return f.read()
     except (OSError, UnicodeDecodeError):
         return None
 

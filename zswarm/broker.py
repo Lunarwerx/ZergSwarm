@@ -51,12 +51,10 @@ class PermissionBroker:
     def _spawn(self) -> subprocess.Popen:
         # Windows hands the string to CreateProcess, which parses quoted paths itself; POSIX needs argv.
         argv = self.command if os.name == "nt" else shlex.split(self.command)
-        # Its own session on POSIX so kill_tree's process-group kill reaches the broker's children, not zswarm.
-        extra = {} if os.name == "nt" else {"start_new_session": True}
         try:
             return subprocess.Popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
-                bufsize=1, **spawn_kwargs(), **extra,
+                bufsize=1, **spawn_kwargs(),  # its own session on POSIX: see spawn_kwargs
             )
         except OSError as e:
             raise BrokerUnavailable(f"permission broker {self.command!r} could not start: {e}") from e

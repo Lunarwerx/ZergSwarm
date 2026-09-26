@@ -68,15 +68,17 @@ def pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, OverflowError):  # OverflowError: a slot name holding a pid past the C int range
         return False
 
 
 def spawn_kwargs() -> dict:
-    """Extra create_subprocess kwargs: a hidden window on Windows, nothing else. Priority stays normal."""
+    """Extra create_subprocess kwargs: a hidden window on Windows; on POSIX a session of the child's own, so
+    kill_tree's process-group kill ends the child and what it started, never this process with it (in the one
+    group they shared, a timed-out bash call killed the whole server). Priority stays normal."""
     if sys.platform == "win32":
         return {"creationflags": CREATE_NO_WINDOW}
-    return {}
+    return {"start_new_session": True}
 
 
 def live_slots(slots_dir=None) -> int:
