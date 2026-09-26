@@ -13,7 +13,8 @@ $T = Join-Path ([IO.Path]::GetTempPath()) ("zergswarm-smoke-" + [guid]::NewGuid(
 $H = Join-Path $T "home"
 foreach ($d in "AppData\Roaming", "AppData\Local") { New-Item -ItemType Directory -Force (Join-Path $H $d) | Out-Null }
 $reg = Get-Item "HKCU:\Environment"
-$userPath, $userPathKind = $reg.GetValue("Path", $null, "DoNotExpandEnvironmentNames"), $reg.GetValueKind("Path")
+$userPath = $reg.GetValue("Path", $null, "DoNotExpandEnvironmentNames")  # $null: this user has no PATH of their own
+$userPathKind = if ($null -ne $userPath) { $reg.GetValueKind("Path") } else { $null }
 # The real client entry, compared by content: Claude Code rewrites ~/.claude.json all day, so its time says nothing.
 $realClaude = Join-Path $env:USERPROFILE ".claude.json"
 # Read with Python: Windows PowerShell's ConvertFrom-Json refuses a file whose keys differ only by case, which a real
@@ -44,6 +45,8 @@ try {
     "codex: " + $(if (Test-Path (Join-Path $H ".codex\config.toml")) { "registered" } else { "not registered" })
     "browser opened: " + $(if (Test-Path $opened) { Get-Content $opened -Raw } else { "nothing" })
 } finally {
-    Set-ItemProperty -Path "HKCU:\Environment" -Name Path -Value $userPath -Type $userPathKind
+    # Put back exactly what was there: the same value and kind, or no user PATH at all (an empty one would hide the machine's).
+    if ($null -ne $userPath) { Set-ItemProperty -Path "HKCU:\Environment" -Name Path -Value $userPath -Type $userPathKind }
+    else { Remove-ItemProperty -Path "HKCU:\Environment" -Name Path -ErrorAction SilentlyContinue }
     "real ~/.claude.json zswarm entry unchanged: " + ((Entry) -eq $realEntry) + "; user PATH restored; sandbox left at $T"
 }
