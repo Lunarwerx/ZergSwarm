@@ -43,12 +43,18 @@ tasks; it runs them all at once on the cheapest models that are good enough for 
 DeepSeek, OpenRouter, Mistral, Hugging Face, or any OpenAI-compatible endpoint), and hands back each answer,
 checked against the JSON schema you asked for. Your agent stays the one that plans, decides and verifies.
 
+The easiest install is to tell your agent (Claude Code, Codex, or the Code tab in Claude Desktop):
+
+> *Install ZergSwarm for me with its one-line installer: https://github.com/Lunarwerx/ZergSwarm*
+
+Or run the installer yourself:
+
 ```bash
 irm https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.ps1 | iex        # Windows (PowerShell)
 curl -fsSL https://raw.githubusercontent.com/Lunarwerx/ZergSwarm/main/install.sh | sh     # macOS and Linux
 ```
 
-That one command installs it, connects it to every assistant it finds (Claude Code, Claude Desktop, Codex) and opens the
+Either way, that one command installs it, connects it to every assistant it finds (Claude Code, Claude Desktop, Codex) and opens the
 console. Paste one free key there (a Gemini or Groq key is the quickest; one is enough), then ask your agent in plain
 words, in a new chat: *"Use zswarm to review every file in src/ for bugs."* You never write the batch yourself.
 
@@ -70,6 +76,10 @@ Each installer puts the `zswarm` command on your PATH from the latest release, i
 [uv](https://docs.astral.sh/uv/) when you have it, else with [pipx](https://pipx.pypa.io) on a Python 3.11 or newer.
 With neither, it installs uv, which brings its own Python, so there is nothing to install first. Then it runs
 `zswarm setup`.
+
+**An agent installing this for someone:** run the one-liner for their system, below. It asks nothing and ends by
+opening the console in their browser. The key goes into that console, never into the chat. Then tell them to open a
+new chat (restart Claude Desktop) so the zswarm tools load.
 
 **Windows** (PowerShell)
 
@@ -101,7 +111,7 @@ set `ZSWARM_NO_SETUP=1` first; then `zswarm setup --client claude-code` connects
 
 ## 🚀 Quick start
 
-1. **Install.** The one-line installer above; it ends by running `zswarm setup`, which registers the MCP server
+1. **Install.** Tell your agent to, or run the one-line installer above; it ends by running `zswarm setup`, which registers the MCP server
    with every assistant it finds and opens the console at `http://127.0.0.1:7790/ui`. Run `zswarm setup` again any
    time; `--client` picks the assistants, and `--instructions` also adds a short "when to use the swarm" note to
    `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
