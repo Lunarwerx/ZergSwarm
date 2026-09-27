@@ -25,7 +25,7 @@ Claude Code, Claude Desktop and Codex send the busywork to dozens of cheap AI mo
 <br/>
 <br/>
 
-<img src="docs/img/how-it-works.gif" alt="Claude Code's busywork, on cheap models: Claude Code sends 12 review jobs out at once, they all run on their own clocks, each turns green with its cost as it finishes, and it ends on 69 seconds, 30 cents, 12 of 12 done, none of it on your Claude plan" width="720">
+<img src="docs/img/real-run.gif" alt="Claude Code's busywork, on cheap models: Claude Code sends 12 review jobs out at once, they all run on their own clocks, each turns green with its cost as it finishes, and it ends on 69 seconds, 30 cents, 12 of 12 done, none of it on your Claude plan" width="720">
 
 <sub>A real run: 12 review jobs on one cheap model (Qwen3.8 27B on Groq), all at once. 69 seconds and $0.30 at list price, none of it on a Claude plan.</sub>
 
