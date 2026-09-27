@@ -43,6 +43,11 @@ def _err(msg: str) -> Result:
     "claude exit 1: API Error: 503 upstream connect error",
     "NoUsableKey: no key to run on: every key in the pool is disabled; top up and run `zswarm keys probe`",
     "API Error: 402 Insufficient Balance (key 1234abcd disabled as out of credit; NoUsableKey: no key with credit left to retry on: every key in the pool is disabled)",
+    # groq's account out of spend, sent as a 400 (board #4291, 2026-09-27: job 20260927-133050-c247 lost all 5 tasks
+    # on it with the gemini leg behind groq never tried)
+    'groq API 400: {"error":{"message":"Organization has blocked API access because a spend alert threshold was met. '
+    'Please visit https://console.groq.com/settings/billing to manage your spend alerts.","type":"invalid_request_error",'
+    '"code":"spend_limit_reached"}}',
 ])
 def test_these_mean_the_leg_could_not_serve(msg):
     assert leg_unavailable(_err(msg))
@@ -540,6 +545,80 @@ def test_run_api_task_gives_up_a_crawling_leg_after_the_minimum_turns(tmp_path):
     task = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})
     res, _ = asyncio.run(agent.run_api_task(Crawl(), task))
     assert not (res.error or "").startswith("SlowLeg") and res.turns > config.SLOW_LEG_MIN_TURNS - 1
+
+
+def test_a_hung_call_on_a_leg_with_somewhere_to_go_fails_over_with_the_transcript(monkeypatch, tmp_path):
+    # The turn average only judges turns that ended, so one hung call held its task for the provider's own timeout
+    # (DeepSeek V4.1 Flash on NVIDIA, 120-300 s a call, 2026-09-27). Now the call is cut and the next leg resends it.
+    import zswarm.agent as agent
+
+    class Hang:
+        async def chat(self, messages, **kw):
+            await asyncio.sleep(30)
+
+    monkeypatch.setattr(config, "SLOW_LEG_CALL_S", 0.05)
+    task = Task.from_dict({"prompt": "the question", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})
+    res, transcript = asyncio.run(agent.run_api_task(Hang(), task, slow_turn_s=30.0))
+    assert res.status == "error" and res.error.startswith("SlowLeg:") and "gave no reply" in res.error and leg_unavailable(res)
+    assert any("the question" in str(m.get("content")) for m in transcript)
+
+
+def test_a_model_another_task_marked_crawling_is_left_after_one_slow_turn(tmp_path):
+    # A job's tasks on a crawling model move together, instead of each paying SLOW_LEG_MIN_TURNS slow turns first.
+    import zswarm.agent as agent
+    from zswarm import selection
+    from zswarm.usage import ChatResult, Usage
+
+    class Crawl:
+        async def chat(self, messages, **kw):
+            return ChatResult(message={"role": "assistant", "content": ""}, finish_reason="stop", usage=Usage(), model="slow",
+                              seconds=40.0, cost_usd=0.0, peak=False)
+
+    selection.note_speed("deepseek-flash", SimpleNamespace(status="error", error="SlowLeg: another task", api_seconds=0, seconds=0, turns=1))
+    task = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})
+    res, _ = asyncio.run(agent.run_api_task(Crawl(), task, slow_turn_s=30.0))
+    assert res.status == "error" and "marked crawling" in res.error and res.turns == 1
+
+
+def test_a_task_whose_own_routes_crawl_moves_one_profile_down_and_keeps_its_transcript(monkeypatch, tmp_path):
+    """Owner, 2026-09-27: a check crawling on a slow model moves to another model and loses nothing. The code
+    profile's only live route was its LAST leg, which ran untimed: 18 refresh tasks sat on GLM 5.3 for 17 minutes."""
+    import zswarm.agent as agent
+    from zswarm import dispatch
+
+    seen = []
+
+    async def leg(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
+        seen.append((task.model, slow_turn_s, resume_messages))
+        if task.model == "rank:glm-5-3:nvidia":
+            return Result(id=task.id, backend="api", model=task.model, status="error", cost_usd=0.0, turns=3, seconds=150.0,
+                          error="SlowLeg: rank:glm-5-3:nvidia averaged 50s a turn over 3 turns"), [
+                {"role": "user", "content": "x"}, {"role": "assistant", "content": "halfway"}]
+        return Result(id=task.id, backend="api", model=task.model, status="ok", answer="done", cost_usd=0.0, turns=1), []
+
+    monkeypatch.setattr(agent, "run_api_task", leg)
+    monkeypatch.setattr(dispatch, "plan_for", lambda task, explain=False: {
+        "profile": "code", "candidates": [{"model": "rank:glm-5-3:nvidia", "provider": "nvidia", "free": True}]})
+    monkeypatch.setattr(dispatch, "_plan_here", lambda profile, **kw: {
+        "profile": profile, "candidates": [{"model": "rank:kimi-k3:nvidia", "provider": "nvidia", "free": True}]})
+    m = JobManager(client=object())
+    monkeypatch.setattr(m, "client_for", lambda model: SimpleNamespace(pool=None))
+
+    async def no_probe(client):
+        return None
+
+    monkeypatch.setattr(m, "_park_broke_keys", no_probe)
+
+    async def go():
+        job = m.submit([Task.from_dict({"id": "t", "prompt": "x", "cwd": str(tmp_path), "tools": "read", "profile": "code"}, {}, 0)])
+        return await asyncio.wait_for(m.wait(job.id, None), 5)
+
+    res = asyncio.run(go()).results["t"]
+    assert res.status == "ok" and res.model == "rank:kimi-k3:nvidia" and res.failover == ["rank:glm-5-3:nvidia"], res
+    assert res.selection["below_floor"] == "general"
+    (_, own_timer, _), (_, _, resumed) = seen
+    assert own_timer == config.SLOW_LEG_TURN_S  # timed now: a leg follows it
+    assert [msg["content"] for msg in resumed] == ["x", "halfway"]
 
 
 def test_a_task_that_hits_its_wall_hands_back_what_it_gathered(tmp_path):

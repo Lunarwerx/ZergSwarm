@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from functools import lru_cache
 from importlib.resources import files
@@ -209,13 +210,59 @@ def note_result(provider, error, now=None):
 
 def reset_load():
     _INFLIGHT.clear(), _SLOW.clear(), _CRAWL.clear()
+    _CRAWL_SEEN[0] = None
+    _crawl_path().unlink(missing_ok=True)
 
 
 # Per MODEL, not per provider: NVIDIA queues each model on its own, and on 2026-09-27 GLM 5.3 Flash took 46-104 s for a
 # one-line answer while GLM 5.3 beside it took 1-4 s. A model whose last call ran slower than config.SLOW_LEG_TURN_S a
 # turn (or timed out) is tried after the capable models that are not crawling, until the mark ages out
 # (config.SLOW_MARK_S); then one call finds out whether it has recovered.
-_CRAWL: dict[str, float] = {}
+#
+# The readings are shared by every zswarm process on the machine through config.HOME/crawl.json: the MCP server and a
+# `zswarm run` job are separate processes, and the same day a CLI job sent all 27 of its tasks to the GLM 5.3 Flash
+# the server had just watched crawl. Each entry is a model's latest reading, [wall-clock time, crawled?], and the
+# newest reading wins across processes, so a recovery seen anywhere clears the mark everywhere.
+_CRAWL: dict[str, list] = {}
+_CRAWL_SEEN: list = [None]  # (mtime_ns, size) of the file when this process last merged it
+_CRAWL_KEEP_S = 86400.0  # readings older than a day are dropped when the file is written
+
+
+def _crawl_path():
+    from . import config
+
+    return config.HOME / "crawl.json"
+
+
+def _merge_crawl():
+    """Fold the other processes' newer readings in; a missing or half-written file is simply not news."""
+    path = _crawl_path()
+    try:
+        st = path.stat()
+        if (st.st_mtime_ns, st.st_size) == _CRAWL_SEEN[0]:
+            return
+        theirs = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    _CRAWL_SEEN[0] = (st.st_mtime_ns, st.st_size)
+    for model, reading in (theirs if isinstance(theirs, dict) else {}).items():
+        if isinstance(reading, list) and len(reading) == 2 and float(reading[0]) > _CRAWL.get(model, [float("-inf")])[0]:
+            _CRAWL[model] = [float(reading[0]), bool(reading[1])]
+
+
+def _record_speed(model, at, crawled):
+    _merge_crawl()
+    _CRAWL[model] = [at, crawled]
+    for m in [m for m, (t, _) in _CRAWL.items() if at - t > _CRAWL_KEEP_S]:
+        del _CRAWL[m]
+    path = _crawl_path()
+    tmp = path.with_name(f"crawl.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(_CRAWL), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)  # a hint, never a failure: this reading still counts in this process
 
 
 def note_speed(model, res, now=None):
@@ -223,20 +270,21 @@ def note_speed(model, res, now=None):
 
     if not model:
         return
-    now = time.monotonic() if now is None else now
+    now = time.time() if now is None else now
     err = res.error or ""
     per_turn = (res.api_seconds or res.seconds or 0.0) / max(1, res.turns or 1)
     if "timeout" in err.lower() or "SlowLeg:" in err or (res.status == "ok" and per_turn > config.SLOW_LEG_TURN_S):
-        _CRAWL[model] = now
+        _record_speed(model, now, True)
     elif res.status == "ok":
-        _CRAWL.pop(model, None)
+        _record_speed(model, now, False)
 
 
 def crawling(model, now=None):
     from . import config
 
-    t = _CRAWL.get(model)
-    return t is not None and (time.monotonic() if now is None else now) - t < config.SLOW_MARK_S
+    _merge_crawl()
+    at, crawled = _CRAWL.get(model, (0.0, False))
+    return crawled and (time.time() if now is None else now) - at < config.SLOW_MARK_S
 
 
 def pressure(provider, capacity, now=None):

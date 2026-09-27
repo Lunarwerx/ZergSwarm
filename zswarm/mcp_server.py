@@ -428,16 +428,19 @@ async def zswarm_select(profile: str = "general", tools: str = "none", backend: 
     `candidates` is what dispatch runs, in the order it would try them, each with the `load_bias` its provider's live
     load adds to its ranking cost (a resting pool only when no pool is live; a lower profile, named in `below_floor`,
     when the asked one has no key). `unavailable` is every evidenced route kept out, with why (all keys disabled,
-    every key resting, no key here); `saturated` is a provider this server found answering nothing.
+    every key resting, no key here); `saturated` is a provider this server found answering nothing. A candidate with
+    `breaker` is a leg this server found failing (host errors, or 404 model_not_found on the keys here): dispatch
+    tries it last, and its `why` says what opened it.
     Empty candidates is the answer to write `why-not-zswarm` from, without launching a job to find out.
     Set task.profile when dispatching; final acceptance remains with the desktop Opus 5.5 orchestrator."""
+    from .breaker import mark_open
     from .dispatch import _plan, _pressure
     from .selection import rebias
 
     out = _plan(profile, tools=tools, backend=backend, min_scores=min_scores, reasoning_effort=reasoning_effort,
                 vision=vision, min_context=0, explain=True)
     gates = manager()._gates
-    out["candidates"] = rebias(out["candidates"], lambda p: _pressure(p, gates))  # the order dispatch applies
+    out["candidates"] = mark_open(rebias(out["candidates"], lambda p: _pressure(p, gates)))  # the order dispatch applies
     if saturated := {p: why for p, gate in gates.items() if (why := gate.tripped())}:
         out["saturated"] = saturated
     return out

@@ -55,6 +55,11 @@ def _isolated_home(tmp_path, monkeypatch, request):
 
     monkeypatch.delenv(_faults.ENV, raising=False)
     _faults.clear()
+    # Crawl marks and provider load are process-wide (selection._CRAWL, _INFLIGHT, _SLOW): one test's crawling model
+    # would move the next test's task off it after one turn.
+    from zswarm import selection as _selection
+
+    _selection.reset_load()
     # A NoCreditLeft trip is process-wide state (jobs._TRIPS), and submit refuses a job on a tripped leg: one test's
     # trip must not refuse the next test's job.
     from zswarm import jobs as _jobs

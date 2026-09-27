@@ -172,3 +172,19 @@ def test_a_crawling_free_model_goes_behind_the_free_models_that_are_not():
         assert [c["model"] for c in selection.rebias(cands, lambda p: 0.0)][0] == first
     finally:
         selection.reset_load()
+
+
+def test_a_crawl_mark_reaches_every_zswarm_process_and_the_newest_reading_wins():
+    # 2026-09-27: the MCP server had watched GLM 5.3 Flash crawl, and a `zswarm run` job (its own process) still sent all
+    # 27 of its tasks there. The marks live in HOME/crawl.json; what another process last saw is what this one sees.
+    import json
+    import time
+    from types import SimpleNamespace
+
+    selection.note_speed("rank:glm-5-3-flash:nvidia", SimpleNamespace(status="error", error="SlowLeg: crawled", api_seconds=0, seconds=0, turns=1))
+    selection._CRAWL.clear()
+    selection._CRAWL_SEEN[0] = None  # a fresh process: nothing in memory
+    assert selection.crawling("rank:glm-5-3-flash:nvidia")
+    path = selection._crawl_path()
+    path.write_text(json.dumps({"rank:glm-5-3-flash:nvidia": [time.time() + 1, False]}), encoding="utf-8")  # another process saw it recover
+    assert not selection.crawling("rank:glm-5-3-flash:nvidia")

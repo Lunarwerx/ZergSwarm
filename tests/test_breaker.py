@@ -146,3 +146,28 @@ def test_a_task_timeout_leaves_the_breaker_as_it_was(clock):
         _record("a", DOWN)
     breaker.record("a", Result(id="t", status="timeout", error="task exceeded 600s"), False)
     assert breaker.state("a") == "open", "running out of its own time is no answer from the host"
+
+
+NOT_SERVED = ('cerebras API 404: {"message":"Model does not exist or you do not have access to it.",'
+              '"type":"not_found_error","param":"model","code":"model_not_found"}')
+
+
+def test_a_model_the_keys_here_are_not_served_opens_its_leg_at_once_and_select_names_it_last(clock):
+    # Board #4291, 2026-09-27: Cerebras lists qwen-3.8-27b in /models, but its one live key answers every chat call
+    # 404 model_not_found. A 404 is no host failure, so the breaker never opened: every code task paid a call on the
+    # leg and zswarm_select showed it as the first candidate. The answer repeats until a key changes: one opens it.
+    leg, other = "rank:qwen3-8-27b:cerebras", "rank:qwen3-8-27b:groq"
+    _record(leg, NOT_SERVED)
+    assert breaker.state(leg) == "open" and breaker.order([leg, other]) == [other, leg]
+    assert "model_not_found" in breaker.report()[leg]["why"]
+    shown = breaker.mark_open([{"model": leg}, {"model": other}])
+    assert [c["model"] for c in shown] == [other, leg] and shown[1]["breaker"]["state"] == "open"
+    assert "breaker" not in shown[0]
+    clock[0] += breaker.OPEN_S
+    assert breaker.state(leg) == "open", "held longer than a host outage: the keys, not the host, decide it"
+    clock[0] += breaker.NOT_SERVED_S
+    assert breaker.order([leg, other]) == [leg, other], "then one task probes it, in case a key that serves it arrived"
+    _record(leg, NOT_SERVED)
+    assert breaker.state(leg) == "open" and breaker.report()[leg]["probe_in_s"] == breaker.NOT_SERVED_S
+    _record("x", "openrouter API 404: No endpoints found matching your data policy")
+    assert breaker.state("x") == "closed", "only a model the provider says it does not serve here opens at once"

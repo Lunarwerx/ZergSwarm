@@ -66,6 +66,10 @@ _UNAVAILABLE = re.compile(
     # CJK translation links). That is the HOST declining the task, not the task failing, so the next leg
     # (the same open-weights model on OpenRouter or Hugging Face, which do not run that filter) gets it.
     r"|Content Exists Risk"
+    # Groq sends its account running out of spend as a 400 `spend_limit_reached` ("Organization has blocked API access
+    # because a spend alert threshold was met"), not a 402: the HOST refusing every call, so the next leg gets the task.
+    # Board #4291, 2026-09-27: job 20260927-133050-c247 lost all 5 tasks on it with the gemini leg behind never tried.
+    r"|spend_limit_reached"
     # A 400 that is the MODEL's bad output, not our request (client._MODEL_OUTPUT_400: gpt-oss on groq calling a tool
     # that does not exist). It reaches this check only after the client resampled it MODEL_OUTPUT_RETRIES times, so that
     # leg cannot produce a parseable answer to this prompt; the next model can. Dredd's copy drafter died on the first

@@ -102,6 +102,20 @@ slower than `SLOW_LEG_TURN_S` a turn, or timed out, is tried after the capable m
 inside its free or paid group, until the mark ages out (`SLOW_MARK_S`) or one fast call clears it. The full order is
 star (`priority`), free before paid, not crawling before crawling, then biased cost and score.
 
+**Moving off a crawling model, mid-task (2026-09-27).** A running task leaves a slow leg for its next one with its
+transcript kept, so the next model continues the same conversation and never repeats a finished tool call:
+
+- after `SLOW_LEG_MIN_TURNS` turns averaging over `SLOW_LEG_TURN_S`, or after ONE such turn when the model is
+  already marked crawling (another task saw it crawl), so a job's tasks on a crawling model move together;
+- when one call has not answered in `SLOW_LEG_CALL_S` (150 s): the call is cut and the next leg sends that turn again.
+
+Only a leg with somewhere to go is timed. So an evaluated task's route ends with **rescue legs**: the routes of the
+next profile down (`code` to `general`, as the out-of-keys step-down does), which a task reaches only when its own
+profile's routes crawl or fail. A rescue leg that is not crawling goes ahead of the task's own crawling legs, and a
+result a rescue leg served carries `selection.below_floor` and a warning to verify it. The crawl marks are shared by
+every zswarm process on the machine through `~/.zswarm/crawl.json`, newest reading wins, so a `zswarm run` job sees
+what the MCP server saw.
+
 Refresh the two packaged JSON files together when evidence or API identities change, then run the
 selection/dispatch regression tests. A missing eligible route is an explicit error, never a reason
 to invent a model mapping, lower the capability requirement, or claim that the whole Swarm is dead.

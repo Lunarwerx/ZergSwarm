@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import capability, config, goal, plans, redaction, survival, toolhooks
+from . import capability, config, goal, plans, redaction, selection, survival, toolhooks
 from .acceptance import decide as decide_acceptance
 from .budget import Budget, checkpoint_due, checkpoint_text, plan_turn, release, settle_turn, status_line, top_rates
 from .capability import Capability
@@ -229,20 +229,31 @@ async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: Co
         res.add_taint("C")  # a cost ceiling (the worker's or the job's) refused the next turn
         return None
     max_tokens, hold = plan
+    call = client.chat(
+        editor.view(messages), model=task.model, tools=send_tools, max_tokens=max_tokens,
+        thinking=task.thinking if not exhausted else False, reasoning_effort=task.reasoning_effort, temperature=task.temperature, user=user_tag,
+        # A leg with a next one leaves a rate-limited pool after slow_turn_s; the LAST leg, with nowhere to go,
+        # after config.SATURATED_REST_S, as a PoolSaturated error instead of a silent wait to timeout_s
+        # (client._post's rest_budget_s; job 20260924-152821-54f1).
+        rest_budget_s=slow_turn_s if slow_turn_s else config.SATURATED_REST_S, last_leg=not slow_turn_s,
+    )
+    limit = None
     try:
-        r = await client.chat(
-            editor.view(messages), model=task.model, tools=send_tools, max_tokens=max_tokens,
-            thinking=task.thinking if not exhausted else False, reasoning_effort=task.reasoning_effort, temperature=task.temperature, user=user_tag,
-            # A leg with a next one leaves a rate-limited pool after slow_turn_s; the LAST leg, with nowhere to go,
-            # after config.SATURATED_REST_S, as a PoolSaturated error instead of a silent wait to timeout_s
-            # (client._post's rest_budget_s; job 20260924-152821-54f1).
-            rest_budget_s=slow_turn_s if slow_turn_s else config.SATURATED_REST_S, last_leg=not slow_turn_s,
-        )
+        if not slow_turn_s:
+            r = await call
+        else:
+            # A leg with somewhere to go does not wait out a hung call (config.SLOW_LEG_CALL_S). This turn is not in
+            # `messages` yet, so the next leg sends it again from the same transcript.
+            async with asyncio.timeout(config.SLOW_LEG_CALL_S) as limit:
+                r = await call
     except ApiError:
         release(ceilings, hold)  # the provider refused the call with a status: nothing was billed
         raise
-    except BaseException:
+    except BaseException as exc:
         settle_turn(ceilings, hold, None)  # cut off mid-call (timeout, cancel): it may have been billed, so the hold stays spent
+        if isinstance(exc, TimeoutError) and limit is not None and limit.expired():
+            raise SlowLeg(f"SlowLeg: {task.model} gave no reply to one turn in {config.SLOW_LEG_CALL_S:.0f}s - failing over "
+                          f"while the task still has time") from None
         raise
     settle_turn(ceilings, hold, r.cost_usd)
     return r
@@ -260,9 +271,14 @@ def _account_turn(task: Task, res: Result, r: ChatResult, usage: Usage, warm: as
     # A model with no price on record costs None for the whole task: not measured, never zero.
     res.cost_usd = None if r.cost_usd is None else (res.cost_usd or 0.0) + r.cost_usd
     res.turns += 1
-    if slow_turn_s and res.turns >= config.SLOW_LEG_MIN_TURNS and res.api_seconds / res.turns > slow_turn_s:
-        raise SlowLeg(f"SlowLeg: {task.model} averaged {res.api_seconds / res.turns:.0f}s a turn over {res.turns} turns "
-                      f"(budget {slow_turn_s:.0f}s) - failing over while the task still has time")
+    if slow_turn_s and res.api_seconds / res.turns > slow_turn_s:
+        # Its own SLOW_LEG_MIN_TURNS slow turns, or ONE when another task (in any zswarm process) has already marked the
+        # model crawling: a job's tasks on a crawling model move together instead of each paying three slow turns.
+        marked = selection.crawling(task.model)
+        if marked or res.turns >= config.SLOW_LEG_MIN_TURNS:
+            raise SlowLeg(f"SlowLeg: {task.model} averaged {res.api_seconds / res.turns:.0f}s a turn over {res.turns} turns "
+                          f"(budget {slow_turn_s:.0f}s{', and it is marked crawling' if marked else ''}) - failing over "
+                          f"while the task still has time")
     if tools and not exhausted and not r.tool_calls:
         _promote_text_calls(res, r, tools)
 

@@ -124,10 +124,37 @@ def plan_for(task, explain=False):
     a job's record names the route it will take: jobs 20260925-184445-98ac and -184659-a701 read
     `rank:gpt-6-luna-high` (OpenRouter, 4,287 of 4,287 keys disabled) on every pending task while their plan could
     only ever run Gemini."""
-    return _plan(task.profile, tools=task.tools, backend=task.backend, reasoning_effort=task.reasoning_effort,
-                 thinking=task.thinking, min_scores=task.min_scores, exclude_models=task.exclude_models,
-                 vision=task.role == "vision", explain=explain,
-                 min_context=(len(task.prompt) + len(task.system or "")) // 3 + task.max_tokens)
+    return _plan(task.profile, explain=explain, **_task_kw(task))
+
+
+def _task_kw(task):
+    return dict(tools=task.tools, backend=task.backend, reasoning_effort=task.reasoning_effort, thinking=task.thinking,
+                min_scores=task.min_scores, exclude_models=task.exclude_models, vision=task.role == "vision",
+                min_context=(len(task.prompt) + len(task.system or "")) // 3 + task.max_tokens)
+
+
+def rescue_legs(task, plan):
+    """The next profile down's routes, which a task moves to when every route of its own crawls or fails (owner,
+    Michael, 2026-09-27: a check crawling on a slow model moves to another model and loses nothing). Without them
+    the profile's own last leg had nowhere to go, so it ran untimed: that day 18 refresh tasks sat on GLM 5.3, the
+    code profile's last NVIDIA route, for 17 minutes while Kimi K3 one profile down was free and answering. A
+    rescue leg is below the task's floors, so a result served by one says so (`below_floor`, run_selected)."""
+    if not task.route:
+        return []
+    at = _STEP_DOWN.get(plan.get("below_floor") or task.profile)
+    if not at or (at == "routine" and not config.is_tool_free(task.tools)):
+        return []
+    have = {c["model"] for c in plan["candidates"]}
+    lower = _plan_here(at, wake=_memo_wake(), **_task_kw(task))
+    return [dict(c, rescue=at) for c in lower["candidates"] if c["model"] not in have]
+
+
+def _with_rescue(own, rescue):
+    """A crawling own leg goes behind the rescue legs that are not crawling: its task would otherwise pay its slow
+    turns before moving. The own legs keep their order among themselves, and so do the rescue legs."""
+    fast = [c for c in rescue if not c.get("crawling")]
+    k = max((i + 1 for i, c in enumerate(own) if not c.get("crawling")), default=0)
+    return own[:k] + fast + own[k:] + [c for c in rescue if c.get("crawling")]
 
 
 def first_choice(profile, *, tools="none", backend="api", vision=False):
@@ -318,11 +345,14 @@ def _leg_key(task, model):
     return f"cc:{model}" if task.backend == "cc" else model
 
 
-def _ordered(plan, task, gates):
-    """(plan, candidates, terminal): the legs rebiased by provider pressure, then ordered by the circuit breaker as it
-    does a pinned route's (jobs._run_legs): an open leg goes last, and the real last leg is the last one no closed
-    leg follows, so a healthy fallback moved ahead of it runs untimed."""
-    plan = {**plan, "candidates": selection.rebias(plan["candidates"], lambda p: _pressure(p, gates))}
+def _ordered(plan, task, gates, rescue=()):
+    """(plan, candidates, terminal): the legs rebiased by provider pressure, the rescue legs placed behind them
+    (_with_rescue), then ordered by the circuit breaker as it does a pinned route's (jobs._run_legs): an open leg
+    goes last, and the real last leg is the last one no closed leg follows, so a healthy fallback moved ahead of it
+    runs untimed."""
+    pressure = lambda p: _pressure(p, gates)  # noqa: E731
+    own = selection.rebias(plan["candidates"], pressure)
+    plan = {**plan, "candidates": _with_rescue(own, selection.rebias(list(rescue), pressure)) if rescue else own}
     candidates = _legs(plan, task)
     terminal = len(candidates) - 1
     if task.route:
@@ -482,11 +512,17 @@ async def run_selected(mgr, job, task, warm, is_pilot):
         await warm.wait()
     # Ranked AFTER the pilot gate and with no await before the first leg's claim, so every task of a batch sees the
     # claims of the tasks ahead of it and a near-equal leg takes the overflow before the cheapest one saturates.
-    plan, candidates, terminal = _ordered(plan, task, getattr(mgr, "_gates", None))
+    plan, candidates, terminal = _ordered(plan, task, getattr(mgr, "_gates", None), rescue_legs(task, plan))
     run = _Run(mgr=mgr, job=job, task=task, warm=warm, is_pilot=is_pilot, plan=plan, candidates=candidates,
                terminal=terminal,
                budget=getattr(mgr, "_budgets", {}).get(job.id))  # the job's budget_usd ceiling, reserved against before every api turn
     res = _fold(await _walk_legs(run), run.attempts, run.plan)
+    rescued = (res.selection.get("selected") or {}).get("rescue")
+    if rescued and res.status == "ok":
+        res.selection["below_floor"] = rescued
+        res.selection["warnings"] = [f"Every {task.profile} route was crawling or failed, so a {rescued} profile model "
+                                     f"finished this task, below the {task.profile} floors: verify the answer before "
+                                     f"accepting it."] + list(res.selection.get("warnings") or [])
     settle_too_large(res, [(r.model, r.error or "") for r in run.attempts], task.tools == "none")
     return res, {"routes": run.transcripts}
 

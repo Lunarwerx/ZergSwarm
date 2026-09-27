@@ -85,6 +85,10 @@ AUTO = "auto"
 # credit: then the caller's own model is the next leg, and a crawl errors back as NoCreditLeft (jobs.NO_CREDIT_TRIP_S).
 SLOW_LEG_TURN_S = 30.0
 SLOW_LEG_MIN_TURNS = 3
+# One call on a leg with somewhere to go that has not answered in this long is cut and fails over the same way, its
+# transcript kept for the next leg. The turn average above only judges turns that ended, so a hung call held its task
+# for the provider's own timeout first (2026-09-27: DeepSeek V4.1 Flash on NVIDIA timed out at 120-300 s a call).
+SLOW_LEG_CALL_S = 150.0
 # A task on its route's LAST leg (nowhere to fail over to) may wait this long, in wall-clock seconds, on a pool
 # whose keys answer 429 before its call errors with `PoolSaturated`. Before 2026-09-24 it had no bound but the
 # task's own timeout_s: job 20260924-152821-54f1 lost 43 tasks at 600 s with zero replies that way.
