@@ -526,3 +526,17 @@ def test_the_terminal_adds_every_key_piped_in_and_drops_only_the_refused_one(mon
     monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(f"gsk_not_a_real_key_0001\n{bad}, gsk_not_a_real_key_0003\n"))
     assert cli.main(["keys", "add", "groq"]) == 1
     assert config.user_keys("groq") == ["gsk_not_a_real_key_0001", "gsk_not_a_real_key_0003"]
+
+
+# Contract: a window of 0 ("re-read every key now", as `zswarm keys probe` asks) counts a balance read stamped in the
+# same clock tick as due. Regression: `age > window` left it fresh, so the Windows legs of CI failed the probe tests
+# whenever the read and the check shared a tick (1.1.1, 2026-09-27).
+def test_a_zero_window_counts_a_read_from_the_same_clock_tick_as_due(monkeypatch):
+    from zswarm import client
+
+    monkeypatch.setattr(client.time, "time", lambda: 1_000_000.0)
+    pool = KeyPool(["sk-aaaa1111", "sk-bbbb2222"], "deepseek")
+    for k in ("sk-aaaa1111", "sk-bbbb2222"):
+        pool.note_balance(k, 5.0, True)
+    assert pool.stale_keys(max_age_s=0.0) == ["sk-aaaa1111", "sk-bbbb2222"]
+    assert pool.stale_keys(max_age_s=60.0) == []

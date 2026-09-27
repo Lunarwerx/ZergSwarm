@@ -699,7 +699,10 @@ class KeyPool:
                 return disabled_age_s if disabled_age_s < DISABLED_RECHECK_S else NO_CREDIT_RECHECK_S
             return disabled_age_s
 
-        return [k for k in self._keys if age(k) > window(k)]
+        # At least the window, not more than it: a read stamped in the same clock tick is 0 s old, and Windows ticks
+        # coarsely, so with `>` a window of 0 (`zswarm keys probe`, "re-read every key now") skipped keys just read
+        # (the Windows legs of CI, 2026-09-27).
+        return [k for k in self._keys if age(k) >= window(k)]
 
     def balance_stale(self, max_age_s: float = BALANCE_FRESH_S, disabled_age_s: float = DISABLED_RECHECK_S) -> bool:
         """True when any key is due a balance read (`stale_keys`)."""
