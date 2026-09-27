@@ -95,11 +95,13 @@ def too_large(res: Result) -> bool:
 # A leg that could not produce the structure the task's schema asks for (worker.SCHEMA_REJECTS rejected submit_result
 # calls, or one invalid tool-free answer) fails over to the next route, never lands as ok (2026-09-25, the Gemini route
 # answered 140-row translations with `{"rows": []}`). Only while it changed no file: a replay must not redo edits.
-_INVALID_STRUCTURE = re.compile(r"^InvalidStructuredAnswer:")
+# An empty answer after the worker's own EMPTY_RETRIES nudges is the same kind of leg: it produced nothing usable and
+# the next model may (2026-09-27: Kimi K3 on NVIDIA ended one of 27 Odin refresh tasks that way, gemini never tried).
+_NO_USABLE_ANSWER = re.compile(r"^(?:InvalidStructuredAnswer:|empty answer\b)")
 
 
 def leg_unavailable(res: Result) -> bool:
-    if res.status == "error" and _INVALID_STRUCTURE.search(res.error or ""):
+    if res.status == "error" and _NO_USABLE_ANSWER.search(res.error or ""):
         return not res.files_changed
     return res.status == "error" and (bool(_UNAVAILABLE.search(res.error or "")) or too_large(res))
 
@@ -692,6 +694,10 @@ class JobManager:
         dead: list[dict] = []
         res: Result | None = None
         transcript: object = {} if cc else None
+        # The conversation a dead api leg got to, which the next leg continues (dispatch._resume, as a profile route
+        # does). Until 2026-09-27 each leg of a pinned route began again from the prompt: the work was lost, and a
+        # leg that had edited files before it crawled had its edits made a second time.
+        carried: list | None = None
         for i, leg in enumerate(legs):
             task.model = job.results[task.id].model = leg
             cut_short = i == terminal and bool(spent)  # the caller's own model is the next leg (see NO_CREDIT_TRIP_S)
@@ -700,18 +706,22 @@ class JobManager:
                 break
             # A crawling leg fails over too, but only while there is a next leg to go to (config.SLOW_LEG_TURN_S).
             slow = config.SLOW_LEG_TURN_S if i < terminal or cut_short else None
-            res, transcript = await self._route_leg(job, task, leg, slow, cut_short, warm, is_pilot)
+            res, transcript = await self._route_leg(job, task, leg, slow, cut_short, warm, is_pilot, carried)
             self._settle_leg(job, task, leg, res, cut_short, spent)
             # A cut-short route ends at its terminal leg: past it the caller's own model beats a leg known down.
             if i == len(legs) - 1 or cut_short or not leg_unavailable(res):
                 break
             dead.append(_dead_leg(leg, res, transcript, cc))
+            if not cc and isinstance(transcript, list) and res.turns:
+                carried = transcript
             is_pilot = False  # the pilot already released the others when its first leg ended
         return res, transcript, dead
 
     async def _route_leg(self, job: Job, task: Task, leg: str, slow: float | None, cut_short: bool,
-                         warm: asyncio.Event | None, is_pilot: bool) -> tuple[Result, object]:
-        """One leg of a route: its (result, transcript), a leg with no key at all answering NoUsableKey."""
+                         warm: asyncio.Event | None, is_pilot: bool, carried: list | None = None) -> tuple[Result, object]:
+        """One leg of a route: its (result, transcript), a leg with no key at all answering NoUsableKey. `carried` is
+        the conversation an earlier leg got to, continued here instead of starting again."""
+        from .dispatch import _resume
         cc = task.backend == "cc"
         try:
             client = self.client_for(leg)
@@ -722,8 +732,11 @@ class JobManager:
                 self._exposed.setdefault(job.id, {})[task.id] = leg
             gate = self._gate_for(leg, client)
             ceiling = self._budgets.get(job.id)  # the job's budget_usd, reserved against before every api turn
+            extra = {"job_budget": ceiling} if ceiling is not None else {}
+            if carried:
+                extra["resume_messages"] = _resume(carried, config.provider_of(leg))
             return await self._gated(job, gate, run_api_task(client, task, warm=warm, is_pilot=is_pilot, user_tag=job.id, slow_turn_s=slow,
-                                                             **({"job_budget": ceiling} if ceiling is not None else {})))
+                                                             **extra))
         except RuntimeError as e:  # no key at all for that provider: the leg cannot serve
             res = Result(id=task.id, backend=task.backend, model=leg, status="error", error=f"NoUsableKey: {e}", started=now_iso(), finished=now_iso())
             return res, ({} if cc else None)

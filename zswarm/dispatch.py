@@ -281,11 +281,16 @@ def _fold(result, attempts, plan):
     return result
 
 
+# What a chat message may carry to ANY provider. A handoff keeps executed tool calls and results; everything else one
+# vendor added is dropped: reasoning payloads cannot be transplanted, and a field one host returns can be one the next
+# host refuses. 2026-09-27: NVIDIA's replies carry `refusal: null`, and 8 of 27 Odin refresh tasks that failed over
+# to groq died there on 400 "property 'refusal' is unsupported", three legs of work lost at the end of the route.
+_PORTABLE = ("role", "content", "tool_calls", "tool_call_id", "name")
+
+
 def _resume(messages, provider):
-    # Cross-provider handoff keeps executed tool calls/results. Vendor-specific reasoning payloads
-    # cannot be transplanted. Never ask a new worker to repeat the completed filesystem operations.
-    saved = [{k: copy.deepcopy(v) for k, v in m.items() if k not in ("reasoning_content", "reasoning", "reasoning_details")}
-             for m in messages]
+    # Never ask a new worker to repeat the completed filesystem operations.
+    saved = [{k: copy.deepcopy(v) for k, v in m.items() if k in _PORTABLE} for m in messages]
     if provider == "deepseek":
         for message in saved:
             if message.get("role") == "assistant" and message.get("tool_calls"):

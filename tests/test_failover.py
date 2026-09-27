@@ -48,6 +48,8 @@ def _err(msg: str) -> Result:
     'groq API 400: {"error":{"message":"Organization has blocked API access because a spend alert threshold was met. '
     'Please visit https://console.groq.com/settings/billing to manage your spend alerts.","type":"invalid_request_error",'
     '"code":"spend_limit_reached"}}',
+    # nothing usable after the worker's own empty-answer nudges: the next model may answer (Kimi K3, 2026-09-27)
+    "empty answer (finish_reason=stop)",
 ])
 def test_these_mean_the_leg_could_not_serve(msg):
     assert leg_unavailable(_err(msg))
@@ -71,21 +73,25 @@ def test_an_ok_result_is_never_unavailable():
 
 
 SLOWS: list = []  # the slow-leg budget each scripted leg was handed, in call order
+RESUMED: list = []  # the conversation each scripted leg was handed to continue, in call order
 
 
 def _job_with(monkeypatch, tmp_path, outcomes: dict, plan: list[str]):
     """A JobManager whose route plan and api runner are scripted: `outcomes[model]` is the Result a leg yields."""
     calls: list[str] = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
         calls.append(task.model)
         SLOWS.append(slow_turn_s)
+        RESUMED.append(resume_messages)
         r = outcomes[task.model]
         out = Result(id=task.id, backend="api", model=task.model, status=r.status, error=r.error, answer=r.answer,
                      cost_usd=r.cost_usd, turns=r.turns, seconds=r.seconds, usage=dict(r.usage))
         if warm is not None and is_pilot:
             warm.set()
-        return out, [{"role": "user", "content": task.prompt}]
+        # an NVIDIA-shaped reply: `refusal` is a field the next host may refuse, so a handoff must not carry it
+        return out, (resume_messages or [{"role": "user", "content": task.prompt}]) + [
+            {"role": "assistant", "content": f"{task.model} got here", "refusal": None}]
 
     monkeypatch.setattr(jobs, "run_api_task", fake_run)
     m = JobManager(client=object())
@@ -120,6 +126,20 @@ def test_an_unavailable_leg_fails_over_and_its_spend_is_kept(monkeypatch, tmp_pa
     import json
     row = [json.loads(line) for line in config.LEDGER.read_text(encoding="utf-8").splitlines()][-1]
     assert row["failover"] == "deepseek-flash-or" and row["model"] == "deepseek-flash"
+
+
+def test_a_pinned_routes_next_leg_continues_the_dead_legs_conversation(monkeypatch, tmp_path):
+    # Until 2026-09-27 each leg of a pinned route began again from the prompt: the crawled leg's work was lost, and its
+    # file edits were made a second time. The next leg now continues, carrying only fields every host accepts.
+    slow = Result(id="t", status="error", error="SlowLeg: deepseek-flash-or averaged 50s a turn over 3 turns", turns=3, cost_usd=0.0)
+    good = Result(id="t", status="ok", answer="42", turns=1, cost_usd=0.0)
+    RESUMED.clear()
+    m, calls = _job_with(monkeypatch, tmp_path, {"deepseek-flash-or": slow, "deepseek-flash": good}, ["deepseek-flash-or", "deepseek-flash"])
+    r = _run(m, Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})).results["t1"]
+    assert calls == ["deepseek-flash-or", "deepseek-flash"] and r.status == "ok"
+    assert RESUMED[0] is None
+    assert [(msg["role"], msg["content"]) for msg in RESUMED[1]] == [("user", "x"), ("assistant", "deepseek-flash-or got here")]
+    assert all("refusal" not in msg for msg in RESUMED[1])
 
 
 def test_the_tasks_own_failure_is_not_retried_elsewhere(monkeypatch, tmp_path):

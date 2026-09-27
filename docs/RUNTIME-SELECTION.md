@@ -107,7 +107,12 @@ transcript kept, so the next model continues the same conversation and never rep
 
 - after `SLOW_LEG_MIN_TURNS` turns averaging over `SLOW_LEG_TURN_S`, or after ONE such turn when the model is
   already marked crawling (another task saw it crawl), so a job's tasks on a crawling model move together;
-- when one call has not answered in `SLOW_LEG_CALL_S` (150 s): the call is cut and the next leg sends that turn again.
+- when one call has not answered in `SLOW_LEG_CALL_S` (150 s): the call is cut and the next leg sends that turn again;
+- when a leg ends with an empty answer after the worker's own nudges, and it changed no file.
+
+The handoff carries only what every chat API accepts (role, content, tool calls and their results), since one host's
+extra fields can be another's 400 (NVIDIA's `refusal`, which groq refuses). A pinned model's route (one model on
+several hosts) hands over the same way; until 1.2.4 its next leg began again from the prompt.
 
 Only a leg with somewhere to go is timed. So an evaluated task's route ends with **rescue legs**: the routes of the
 next profile down (`code` to `general`, as the out-of-keys step-down does), which a task reaches only when its own
