@@ -106,6 +106,11 @@ MODEL_OUTPUT_RETRIES = 3
 # repo's rule is that a key which has run out goes to the disabled slot and is never retried, so route
 # these to broke() like a 402. A real rate-limit 429 does not match and still just rests.
 _OUT_OF_CREDIT_429 = re.compile(r"[Ii]nsufficient balance|no resource pack|balance is insufficient|arrears|欠费", re.I)
+# The same for a 400: groq answers a key whose organisation hit its spend alert with 400 `spend_limit_reached`
+# ("Organization has blocked API access because a spend alert threshold was met"). It is per KEY (each key is its own
+# organisation), so it disables that key and the next one serves. 2026-09-27: one Odin refresh run met it 20 times on
+# groq while 7 calls on its other keys answered, and each meeting failed the whole leg.
+_OUT_OF_SPEND_400 = re.compile(r"spend_limit_reached", re.I)
 RATE_REST_S = 20.0
 DEAD_REST_S = 600.0
 # A 429 that means "this key's quota for TODAY is spent", not "too fast". Gemini's free tier caps each key at 20
@@ -1001,8 +1006,9 @@ class ChatClient:
     async def _after_response(self, r: httpx.Response, key: str, free: bool, attempt: int, resamples: int) -> tuple[str, int]:
         """A non-200 reply: rest/rotate/disable the key and say what the caller does next - "continue" (retry
         at once), "sleep" (back off first) - or raise. Returns the resample count it kept."""
-        if r.status_code == 429 and _OUT_OF_CREDIT_429.search(r.text or ""):
-            # "429" but it means out of credit: disable, do not rest-and-retry forever.
+        if (r.status_code == 429 and _OUT_OF_CREDIT_429.search(r.text or "")) or (
+                r.status_code == 400 and _OUT_OF_SPEND_400.search(r.text or "")):
+            # "429" (or groq's "400") but it means out of credit: disable, do not rest-and-retry forever.
             self.pool.broke(key, status=402)
             if self._rotate_free(free, attempt):
                 return "continue", resamples

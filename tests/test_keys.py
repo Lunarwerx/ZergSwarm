@@ -268,6 +268,25 @@ def test_a_402_parks_the_key_until_a_top_up_and_the_next_key_serves():
     assert K[0] in seen[-3:]  # back in the rotation
 
 
+def test_a_spend_blocked_key_is_disabled_and_the_next_key_serves():
+    # groq answers a key whose organisation hit its spend alert with a 400, per key: 2026-09-27 one refresh run met it
+    # 20 times while 7 calls on groq's other keys answered, and each meeting failed the task's whole leg.
+    seen = []
+
+    def handler(req: httpx.Request):
+        if req.method == "GET":
+            return _balance("5.00")
+        seen.append(_key_of(req))
+        if _key_of(req) == K[0]:
+            return httpx.Response(400, json={"error": {"message": "Organization has blocked API access because a spend alert "
+                                                       "threshold was met.", "type": "invalid_request_error", "code": "spend_limit_reached"}})
+        return _ok()
+
+    c = _client_with_transport(handler)
+    asyncio.run(c.chat([{"role": "user", "content": "x"}]))
+    assert seen == [K[0], K[1]] and c.pool.disabled() == [config.fingerprint(K[0])]
+
+
 def test_a_balance_probe_at_or_under_zero_parks_the_key_before_any_request():
     seen, gets = [], []
 
