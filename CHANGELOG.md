@@ -5,6 +5,11 @@ every version gets a section before its tag is pushed: the release workflow refu
 
 ## [Unreleased]
 
+### Fixed
+- On Windows, a crawl mark that another ZergSwarm process had cleared could stay set in this one: when the two
+  writes to `~/.zswarm/crawl.json` landed in the same clock tick with the same file size, the newer reading was
+  never read. A file written in the last two seconds is now always read again.
+
 ## [1.2.7] - 2026-09-27
 
 ### Fixed

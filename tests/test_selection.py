@@ -178,6 +178,7 @@ def test_a_crawl_mark_reaches_every_zswarm_process_and_the_newest_reading_wins()
     # 2026-09-27: the MCP server had watched GLM 5.3 Flash crawl, and a `zswarm run` job (its own process) still sent all
     # 27 of its tasks there. The marks live in HOME/crawl.json; what another process last saw is what this one sees.
     import json
+    import os
     import time
     from types import SimpleNamespace
 
@@ -186,5 +187,10 @@ def test_a_crawl_mark_reaches_every_zswarm_process_and_the_newest_reading_wins()
     selection._CRAWL_SEEN[0] = None  # a fresh process: nothing in memory
     assert selection.crawling("rank:glm-5-3-flash:nvidia")
     path = selection._crawl_path()
-    path.write_text(json.dumps({"rank:glm-5-3-flash:nvidia": [time.time() + 1, False]}), encoding="utf-8")  # another process saw it recover
+    before = path.stat()
+    # Another process saw it recover, and its write lands in the same clock tick with the same size, as it can on Windows.
+    recovered = json.dumps({"rank:glm-5-3-flash:nvidia": [int(time.time()) + 2, False]})
+    path.write_text(recovered.ljust(before.st_size), encoding="utf-8")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert path.stat().st_size == before.st_size
     assert not selection.crawling("rank:glm-5-3-flash:nvidia")

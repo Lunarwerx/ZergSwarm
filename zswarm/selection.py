@@ -239,7 +239,9 @@ def _merge_crawl():
     path = _crawl_path()
     try:
         st = path.stat()
-        if (st.st_mtime_ns, st.st_size) == _CRAWL_SEEN[0]:
+        # A file written in the last two seconds is always read again: a coarse file clock (Windows) stamps two writes
+        # in one tick alike, and then an equal size is a coin flip (the Windows CI leg lost it on 2026-09-27).
+        if (st.st_mtime_ns, st.st_size) == _CRAWL_SEEN[0] and time.time() - st.st_mtime_ns / 1e9 > 2.0:
             return
         theirs = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
