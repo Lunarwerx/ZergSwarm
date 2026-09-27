@@ -107,7 +107,9 @@ transcript kept, so the next model continues the same conversation and never rep
 
 - after `SLOW_LEG_MIN_TURNS` turns averaging over `SLOW_LEG_TURN_S`, or after ONE such turn when the model is
   already marked crawling (another task saw it crawl), so a job's tasks on a crawling model move together;
-- when one call has not answered in `SLOW_LEG_CALL_S` (150 s): the call is cut and the next leg sends that turn again;
+- when one call to a model already marked crawling has not answered in `SLOW_LEG_CALL_S` (150 s): the call is cut
+  and the next leg sends that turn again. Any turn that slow marks its model at once, for every task, and a call to
+  an unmarked model is never cut, since a healthy model writing a large file can take that long;
 - when a leg ends with an empty answer after the worker's own nudges, and it changed no file.
 
 The handoff carries only what every chat API accepts (role, content, tool calls and their results), since one host's

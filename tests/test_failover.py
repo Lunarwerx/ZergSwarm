@@ -567,18 +567,30 @@ def test_run_api_task_gives_up_a_crawling_leg_after_the_minimum_turns(tmp_path):
     assert not (res.error or "").startswith("SlowLeg") and res.turns > config.SLOW_LEG_MIN_TURNS - 1
 
 
-def test_a_hung_call_on_a_leg_with_somewhere_to_go_fails_over_with_the_transcript(monkeypatch, tmp_path):
-    # The turn average only judges turns that ended, so one hung call held its task for the provider's own timeout
-    # (DeepSeek V4.1 Flash on NVIDIA, 120-300 s a call, 2026-09-27). Now the call is cut and the next leg resends it.
+def test_a_slow_call_marks_its_model_and_a_hung_call_to_a_marked_model_is_cut(monkeypatch, tmp_path):
+    # The turn average only judges turns that ended, so hung calls held their tasks for the provider's own timeout
+    # three times over (DeepSeek V4.1 Flash on NVIDIA, 120-300 s a call, 2026-09-27). One slow turn now marks the
+    # model for every task at once, and a call to a marked model on a leg with somewhere to go is cut and resent by the
+    # next leg. A call to an unmarked model is left to finish: a healthy model writing a large file can take that long.
     import zswarm.agent as agent
+    from zswarm import selection
+    from zswarm.usage import ChatResult, Usage
 
-    class Hang:
+    class Slow:
+        def __init__(self, wait):
+            self.wait = wait
+
         async def chat(self, messages, **kw):
-            await asyncio.sleep(30)
+            await asyncio.sleep(self.wait)
+            return ChatResult(message={"role": "assistant", "content": "done"}, finish_reason="stop", usage=Usage(), model="m",
+                              seconds=self.wait, cost_usd=0.0, peak=False)
 
     monkeypatch.setattr(config, "SLOW_LEG_CALL_S", 0.05)
     task = Task.from_dict({"prompt": "the question", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})
-    res, transcript = asyncio.run(agent.run_api_task(Hang(), task, slow_turn_s=30.0))
+    res, _ = asyncio.run(agent.run_api_task(Slow(0.2), task, slow_turn_s=30.0))
+    assert res.status == "ok" and res.answer == "done"  # unmarked: it finished
+    assert selection.crawling("deepseek-flash")  # and its slow turn is news for everyone
+    res, transcript = asyncio.run(agent.run_api_task(Slow(30), task, slow_turn_s=30.0))
     assert res.status == "error" and res.error.startswith("SlowLeg:") and "gave no reply" in res.error and leg_unavailable(res)
     assert any("the question" in str(m.get("content")) for m in transcript)
 

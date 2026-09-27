@@ -239,11 +239,11 @@ async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: Co
     )
     limit = None
     try:
-        if not slow_turn_s:
+        if not slow_turn_s or not selection.crawling(task.model):
             r = await call
         else:
-            # A leg with somewhere to go does not wait out a hung call (config.SLOW_LEG_CALL_S). This turn is not in
-            # `messages` yet, so the next leg sends it again from the same transcript.
+            # A leg with somewhere to go does not wait out a hung call to a model already marked crawling
+            # (config.SLOW_LEG_CALL_S). This turn is not in `messages` yet, so the next leg sends it again.
             async with asyncio.timeout(config.SLOW_LEG_CALL_S) as limit:
                 r = await call
     except ApiError:
@@ -267,6 +267,8 @@ def _account_turn(task: Task, res: Result, r: ChatResult, usage: Usage, warm: as
         warm.set()
     usage.add(r.usage)
     _note_upstream(res, r)
+    if r.seconds > config.SLOW_LEG_CALL_S:
+        selection.note_crawl(task.model)
     _note_truncation(res, r)
     # A model with no price on record costs None for the whole task: not measured, never zero.
     res.cost_usd = None if r.cost_usd is None else (res.cost_usd or 0.0) + r.cost_usd

@@ -279,6 +279,12 @@ def note_speed(model, res, now=None):
         _record_speed(model, now, False)
 
 
+def note_crawl(model, now=None):
+    """One turn slower than config.SLOW_LEG_CALL_S: news for every task on the model now, not when this leg ends."""
+    if model:
+        _record_speed(model, time.time() if now is None else now, True)
+
+
 def crawling(model, now=None):
     from . import config
 
