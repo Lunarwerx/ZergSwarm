@@ -37,7 +37,7 @@ def _setup(monkeypatch, tmp_path, legs):
     seen = []
     outcomes = iter(legs)
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
         seen.append({"model": task.model, "effort": task.reasoning_effort, "resume": resume_messages,
                      "max_turns": task.max_turns, "max_cost": task.max_cost_usd,
                      "timeout": task.timeout_s})
@@ -141,7 +141,7 @@ def test_an_open_breaker_puts_its_leg_last_and_the_job_budget_rides_on_every_leg
     monkeypatch.setattr(selection, "plan", lambda *a, **k: _plan(["rank:deepseek-v4-pro", "rank:glm-5-3"]))
     seen = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, job_budget=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, job_budget=None, **kw):
         seen.append((task.model, slow_turn_s, job_budget))
         return Result(id=task.id, backend="api", model=task.model, status="ok", answer="ok", cost_usd=0.1, turns=1), []
 

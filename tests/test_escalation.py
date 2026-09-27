@@ -25,7 +25,7 @@ def _manager(monkeypatch, outcomes: dict, skill: dict | None = None):
     """A JobManager whose api runner answers `outcomes[model]` and records the system prompt each run was given."""
     seen: list[tuple[str, str]] = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         seen.append((task.model, task.system or ""))
         r = outcomes[task.model]
         out = Result(id=task.id, backend="api", model=task.model, status=r.status, error=r.error, answer=r.answer, cost_usd=r.cost_usd, turns=1)

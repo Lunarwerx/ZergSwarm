@@ -40,7 +40,7 @@ def test_routed_tasks_skip_a_leg_after_consecutive_host_failures_until_a_probe_s
     calls: list[str] = []
     healthy = {"deepseek-flash-or": False}
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         calls.append(task.model)
         if warm is not None and is_pilot:
             warm.set()
@@ -116,7 +116,7 @@ def test_a_fallback_moved_ahead_of_an_open_primary_runs_untimed_as_the_last_leg(
         _record("deepseek-flash-or", DOWN)
     budgets: list[tuple[str, float | None]] = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         budgets.append((task.model, slow_turn_s))
         if warm is not None and is_pilot:
             warm.set()

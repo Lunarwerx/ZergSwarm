@@ -112,6 +112,11 @@ transcript kept, so the next model continues the same conversation and never rep
   an unmarked model is never cut, since a healthy model writing a large file can take that long;
 - when a leg ends with an empty answer after the worker's own nudges, and it changed no file.
 
+A slow task moves only when a later leg is worth moving to (`dispatch.worth_moving`): its model not marked crawling,
+its provider able to take a call within the slow bar, its breaker not open. With none, the task stays and finishes
+where it is, since moving would trade a slow model for a crawling, saturated or broken one. When it does move, it skips
+the legs marked crawling since it started and goes to the first one that is not.
+
 The handoff carries only what every chat API accepts (role, content, tool calls and their results), since one host's
 extra fields can be another's 400 (NVIDIA's `refusal`, which groq refuses). A pinned model's route (one model on
 several hosts) hands over the same way; until 1.2.4 its next leg began again from the prompt.

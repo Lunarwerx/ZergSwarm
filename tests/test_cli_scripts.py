@@ -99,7 +99,7 @@ def stub_api(monkeypatch) -> StubApi:
     async def fake_ask(client, prompt, model=None, **kw):
         return api.result("ask", model, prompt)
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
         if warm is not None and is_pilot:
             warm.set()
         return api.result(task.id, task.model, task.prompt), [{"role": "user", "content": task.prompt}]

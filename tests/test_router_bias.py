@@ -95,7 +95,7 @@ def test_concurrent_tasks_spread_over_near_equal_legs(monkeypatch, tmp_path):
     monkeypatch.setattr(dispatch, "_capacity", lambda p, gates=None: 1)
     seen = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
         seen.append(task.model)
         await asyncio.sleep(0.05)
         return Result(id=task.id, backend="api", model=task.model, status="ok", answer="ok", cost_usd=0.1, turns=1), []

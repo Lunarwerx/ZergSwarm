@@ -690,6 +690,8 @@ class JobManager:
                           warm: asyncio.Event | None, is_pilot: bool) -> tuple[Result, object, list[dict]]:
         """Run the legs in order until one serves, fails for a reason another leg cannot fix, or the route is cut
         short; returns (result, transcript, the dead legs before it)."""
+        from .dispatch import worth_moving
+
         cc = task.backend == "cc"
         dead: list[dict] = []
         res: Result | None = None
@@ -706,7 +708,9 @@ class JobManager:
                 break
             # A crawling leg fails over too, but only while there is a next leg to go to (config.SLOW_LEG_TURN_S).
             slow = config.SLOW_LEG_TURN_S if i < terminal or cut_short else None
-            res, transcript = await self._route_leg(job, task, leg, slow, cut_short, warm, is_pilot, carried)
+            # A slow leg is left only for a later one worth moving to (dispatch.worth_moving, agent._better_ahead).
+            escape = (lambda later=legs[i + 1:]: worth_moving(later, task)) if i < terminal else None
+            res, transcript = await self._route_leg(job, task, leg, slow, cut_short, warm, is_pilot, carried, escape)
             self._settle_leg(job, task, leg, res, cut_short, spent)
             # A cut-short route ends at its terminal leg: past it the caller's own model beats a leg known down.
             if i == len(legs) - 1 or cut_short or not leg_unavailable(res):
@@ -718,7 +722,8 @@ class JobManager:
         return res, transcript, dead
 
     async def _route_leg(self, job: Job, task: Task, leg: str, slow: float | None, cut_short: bool,
-                         warm: asyncio.Event | None, is_pilot: bool, carried: list | None = None) -> tuple[Result, object]:
+                         warm: asyncio.Event | None, is_pilot: bool, carried: list | None = None,
+                         escape=None) -> tuple[Result, object]:
         """One leg of a route: its (result, transcript), a leg with no key at all answering NoUsableKey. `carried` is
         the conversation an earlier leg got to, continued here instead of starting again."""
         from .dispatch import _resume
@@ -735,6 +740,8 @@ class JobManager:
             extra = {"job_budget": ceiling} if ceiling is not None else {}
             if carried:
                 extra["resume_messages"] = _resume(carried, config.provider_of(leg))
+            if escape is not None:
+                extra["escape"] = escape
             return await self._gated(job, gate, run_api_task(client, task, warm=warm, is_pilot=is_pilot, user_tag=job.id, slow_turn_s=slow,
                                                              **extra))
         except RuntimeError as e:  # no key at all for that provider: the leg cannot serve

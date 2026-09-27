@@ -80,7 +80,7 @@ def _job_with(monkeypatch, tmp_path, outcomes: dict, plan: list[str]):
     """A JobManager whose route plan and api runner are scripted: `outcomes[model]` is the Result a leg yields."""
     calls: list[str] = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
         calls.append(task.model)
         SLOWS.append(slow_turn_s)
         RESUMED.append(resume_messages)
@@ -375,7 +375,7 @@ def test_a_route_cut_short_by_missing_credit_fails_fast_with_one_message(monkeyp
     the caller's own model now: the leg is timed, the first trip stops its siblings, and a later job does not call it."""
     calls: list[str] = []
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         calls.append(task.model)
         if slow_turn_s is None:  # untimed, the crawl runs into the task's own budget
             return Result(id=task.id, backend="api", model=task.model, status="timeout", error="task exceeded 600s"), []
@@ -610,6 +610,44 @@ def test_a_model_another_task_marked_crawling_is_left_after_one_slow_turn(tmp_pa
     task = Task.from_dict({"prompt": "x", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"})
     res, _ = asyncio.run(agent.run_api_task(Crawl(), task, slow_turn_s=30.0))
     assert res.status == "error" and "marked crawling" in res.error and res.turns == 1
+    # With nothing better ahead (every later leg crawling, saturated or broken) it stays and runs on: one Odin refresh
+    # task left Kimi K3 at 32 s a turn, crossed a spend-blocked groq and two rate-limited Gemini legs, and died on its cap.
+    res, _ = asyncio.run(agent.run_api_task(Crawl(), task, slow_turn_s=30.0, escape=lambda: False))
+    assert not (res.error or "").startswith("SlowLeg") and res.turns > 1
+
+
+def test_a_task_leaving_a_slow_leg_skips_the_legs_marked_crawling_since_it_started(monkeypatch, tmp_path):
+    import zswarm.agent as agent
+    from zswarm import dispatch, selection
+
+    ran = []
+
+    async def leg(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
+        ran.append(task.model)
+        if task.model == "rank:glm-5-3-flash:nvidia":
+            selection.note_crawl("rank:glm-5-3:nvidia")  # another task saw the next leg crawl meanwhile
+            return Result(id=task.id, backend="api", model=task.model, status="error", cost_usd=0.0, turns=1,
+                          error="SlowLeg: rank:glm-5-3-flash:nvidia averaged 40s a turn over 1 turns"), []
+        return Result(id=task.id, backend="api", model=task.model, status="ok", answer="done", cost_usd=0.0, turns=1), []
+
+    monkeypatch.setattr(agent, "run_api_task", leg)
+    monkeypatch.setattr(dispatch, "plan_for", lambda task, explain=False: {"profile": "general", "candidates": [
+        {"model": m, "provider": "nvidia", "free": True} for m in ("rank:glm-5-3-flash:nvidia", "rank:glm-5-3:nvidia", "rank:kimi-k3:nvidia")]})
+    monkeypatch.setattr(dispatch, "rescue_legs", lambda task, plan: [])
+    m = JobManager(client=object())
+    monkeypatch.setattr(m, "client_for", lambda model: SimpleNamespace(pool=None))
+
+    async def no_probe(client):
+        return None
+
+    monkeypatch.setattr(m, "_park_broke_keys", no_probe)
+
+    async def go():
+        job = m.submit([Task.from_dict({"id": "t", "prompt": "x", "cwd": str(tmp_path), "tools": "read", "profile": "general"}, {}, 0)])
+        return await asyncio.wait_for(m.wait(job.id, None), 5)
+
+    res = asyncio.run(go()).results["t"]
+    assert ran == ["rank:glm-5-3-flash:nvidia", "rank:kimi-k3:nvidia"] and res.status == "ok", ran
 
 
 def test_a_task_whose_own_routes_crawl_moves_one_profile_down_and_keeps_its_transcript(monkeypatch, tmp_path):
@@ -686,7 +724,7 @@ def test_a_pilot_that_fails_before_its_first_reply_does_not_strand_the_job(monke
     no key, every leg down) left the rest of the job waiting until each task's own timeout, with 0 calls made -
     the 900 s zero-call gemini timeouts seen on 2026-09-24. A finished pilot must release the others either way."""
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         if warm is not None and not is_pilot:
             await warm.wait()  # what agent._loop does before its first call
         if is_pilot:  # fails before any reply, so, like the real loop, it never sets `warm`

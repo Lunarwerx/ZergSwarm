@@ -190,7 +190,7 @@ def test_a_job_on_one_leg_runs_no_more_live_tasks_than_its_gate_allows(monkeypat
 
     monkeypatch.setattr(m, "_park_broke_keys", no_probe)
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         if warm is not None and is_pilot:
             warm.set()
         live["now"] += 1

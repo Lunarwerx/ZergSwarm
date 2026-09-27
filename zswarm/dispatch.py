@@ -281,6 +281,27 @@ def _fold(result, attempts, plan):
     return result
 
 
+def worth_moving(models, task):
+    """True when one of `models` (the legs after a slow one) is worth moving to NOW: not marked crawling, its provider
+    able to take a call within the slow bar, its breaker not open. A model this machine cannot place counts as worth
+    it, since only what is known to be worse keeps a task where it is (agent._better_ahead)."""
+    wake = _memo_wake()
+    for model in models:
+        try:
+            provider = config.provider_of(model)
+        except (KeyError, ValueError):
+            return True
+        if not selection.crawling(model) and _usable(provider, wake) and breaker.state(_leg_key(task, model)) != "open":
+            return True
+    return False
+
+
+def _past_crawling(candidates, i):
+    """After a SlowLeg, the next leg to try: skip the ones marked crawling while one ahead is not, instead of paying a
+    slow turn on each. With every leg ahead crawling, the next one as before."""
+    return next((k for k in range(i, len(candidates)) if not selection.crawling(candidates[k]["model"])), i)
+
+
 # What a chat message may carry to ANY provider. A handoff keeps executed tool calls and results; everything else one
 # vendor added is dropped: reasoning payloads cannot be transplanted, and a field one host returns can be one the next
 # host refuses. 2026-09-27: NVIDIA's replies carry `refusal: null`, and 8 of 27 Odin refresh tasks that failed over
@@ -389,7 +410,7 @@ def _budget_stop(run, used):
     return None
 
 
-async def _start_leg(run, child, leg, timed):
+async def _start_leg(run, child, leg, timed, later=()):
     """Run one leg to its (result, transcript). Raises what the leg raised, with run.gate/served set as far as it got."""
     from .agent import run_api_task
 
@@ -408,13 +429,14 @@ async def _start_leg(run, child, leg, timed):
     res, transcript = await mgr._gated(job, run.gate, _unless_tripped(run.gate, run_api_task(
         client, child, warm=run.warm, is_pilot=run.is_pilot, user_tag=job.id,
         slow_turn_s=config.SLOW_LEG_TURN_S if timed else None,
+        **({"escape": lambda: worth_moving([c["model"] for c in later], run.task)} if timed else {}),
         resume_messages=_resume(run.messages, config.provider_of(leg)) if run.messages else None,
         **({"job_budget": run.budget} if run.budget is not None else {}))))
     run.messages = transcript
     return res, transcript
 
 
-async def _try_leg(run, candidate, timed, used):
+async def _try_leg(run, candidate, timed, used, later=()):
     """One pass over `candidate`: claim its provider, run it, record the outcome. Returns the leg's result."""
     from .jobs import leg_unavailable
 
@@ -429,7 +451,7 @@ async def _try_leg(run, candidate, timed, used):
     # Claimed on every pass, the PoolSaturated requeue included, and released in the finally: no claim leaks.
     selection.claim(candidate.get("provider"))
     try:
-        res, transcript = await _start_leg(run, child, leg, timed)
+        res, transcript = await _start_leg(run, child, leg, timed, later)
     except _Tripped as exc:
         res, transcript, run.tripped = _failure(task.id, task.backend, leg, f"PoolSaturated: {exc}", plan), None, True
     except RuntimeError as exc:
@@ -494,12 +516,12 @@ async def _walk_legs(run):
             break
         candidate, last = run.candidates[i], i == len(run.candidates) - 1
         # a crawling leg fails over only while a closed leg follows it
-        res = await _try_leg(run, candidate, i < run.terminal, used)
+        res = await _try_leg(run, candidate, i < run.terminal, used, run.candidates[i + 1:])
         if _requeue(run, res, candidate["model"], last):
             continue
         if not leg_unavailable(res):
             break  # semantic/task failures need the orchestrator's acceptance check, never blind edit replay
-        i += 1
+        i = _past_crawling(run.candidates, i + 1) if (res.error or "").startswith("SlowLeg:") else i + 1
     return res
 
 

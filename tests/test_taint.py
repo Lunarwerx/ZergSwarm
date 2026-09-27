@@ -71,7 +71,7 @@ def test_a_failed_over_task_carries_F_and_the_dead_legs_own_letters(monkeypatch,
     dead = Result(id="t", status="error", error="deepseek API 503: service unavailable", taint="T")
     good = Result(id="t", status="ok", answer="42")
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, **kw):
         r = {"deepseek-flash-or": dead, "deepseek-flash": good}[task.model]
         if warm is not None and is_pilot:
             warm.set()
@@ -118,7 +118,7 @@ def test_an_auto_task_that_failed_over_through_run_selected_is_tainted_F(monkeyp
     monkeypatch.setattr(selection, "plan", lambda *a, **k: {"profile": "code", "candidates": [
         {"model": m, "reasoning_effort": "high", "thinking": True, "benchmark_slug": m} for m in ("rank:a", "rank:b")]})
 
-    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None):
+    async def fake_run(client, task, warm=None, is_pilot=False, user_tag=None, slow_turn_s=None, resume_messages=None, **kw):
         if task.model == "rank:a":
             return Result(id=task.id, backend="api", model=task.model, status="error", error="API Error: 503 no endpoints", taint="T"), []
         return Result(id=task.id, backend="api", model=task.model, status="ok", answer="ok"), []

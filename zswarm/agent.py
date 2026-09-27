@@ -174,7 +174,7 @@ async def _stop_hooks(sb: Sandbox, answer: str, last: bool) -> str | None:
     return f"A Stop hook did not accept that as finished: {reason}\nAddress it, then give your final answer." if reason else None
 
 
-async def _loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, messages: list[dict], tools: list[dict], usage: Usage, warm: asyncio.Event | None, is_pilot: bool, user_tag: str | None, slow_turn_s: float | None = None, job_budget: Budget | None = None) -> None:
+async def _loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, messages: list[dict], tools: list[dict], usage: Usage, warm: asyncio.Event | None, is_pilot: bool, user_tag: str | None, slow_turn_s: float | None = None, job_budget: Budget | None = None, escape=None) -> None:
     if warm is not None and not is_pilot:
         await warm.wait()  # the pilot's first reply lands the shared prefix in DeepSeek's cache; everyone else reads it
     empty_retries = 0
@@ -191,10 +191,10 @@ async def _loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, me
             res.add_taint("B")
         else:
             budget.note(task, messages, turn)
-        r = await _call_turn(client, task, res, editor, messages, tools, budget.ceilings, exhausted, user_tag, slow_turn_s)
+        r = await _call_turn(client, task, res, editor, messages, tools, budget.ceilings, exhausted, user_tag, slow_turn_s, escape)
         if r is None:
             return
-        _account_turn(task, res, r, usage, warm, is_pilot, slow_turn_s, tools, exhausted)
+        _account_turn(task, res, r, usage, warm, is_pilot, slow_turn_s, tools, exhausted, escape)
         messages.append(dict(r.message))
         done, empty_retries = await _after_reply(task, res, sb, messages, r, empty_retries, schema_state, guard, gate, exhausted)
         if done:
@@ -220,7 +220,8 @@ class _TurnBudget:
 
 
 async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: ContextEditor, messages: list[dict], tools: list[dict],
-                     ceilings: list[Budget], exhausted: bool, user_tag: str | None, slow_turn_s: float | None) -> ChatResult | None:
+                     ceilings: list[Budget], exhausted: bool, user_tag: str | None, slow_turn_s: float | None,
+                     escape=None) -> ChatResult | None:
     """Plan one turn against the ceilings and send it. None when a ceiling refused it; res then carries the error."""
     send_tools = tools if (tools and not exhausted) else None
     plan = await plan_turn(task.model, editor.view(messages), send_tools, task.max_tokens, ceilings)
@@ -239,7 +240,7 @@ async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: Co
     )
     limit = None
     try:
-        if not slow_turn_s or not selection.crawling(task.model):
+        if not (slow_turn_s and selection.crawling(task.model) and _better_ahead(escape)):
             r = await call
         else:
             # A leg with somewhere to go does not wait out a hung call to a model already marked crawling
@@ -260,7 +261,7 @@ async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: Co
 
 
 def _account_turn(task: Task, res: Result, r: ChatResult, usage: Usage, warm: asyncio.Event | None, is_pilot: bool,
-                  slow_turn_s: float | None, tools: list[dict], exhausted: bool) -> None:
+                  slow_turn_s: float | None, tools: list[dict], exhausted: bool, escape=None) -> None:
     """Book a reply onto the task: usage, provider, cost, turn count; fail a leg that is too slow over; promote
     tool calls written as text."""
     if warm is not None and is_pilot:
@@ -277,7 +278,7 @@ def _account_turn(task: Task, res: Result, r: ChatResult, usage: Usage, warm: as
         # Its own SLOW_LEG_MIN_TURNS slow turns, or ONE when another task (in any zswarm process) has already marked the
         # model crawling: a job's tasks on a crawling model move together instead of each paying three slow turns.
         marked = selection.crawling(task.model)
-        if marked or res.turns >= config.SLOW_LEG_MIN_TURNS:
+        if (marked or res.turns >= config.SLOW_LEG_MIN_TURNS) and _better_ahead(escape):
             raise SlowLeg(f"SlowLeg: {task.model} averaged {res.api_seconds / res.turns:.0f}s a turn over {res.turns} turns "
                           f"(budget {slow_turn_s:.0f}s{', and it is marked crawling' if marked else ''}) - failing over "
                           f"while the task still has time")
@@ -329,11 +330,20 @@ def _redact_resumed(redactor: redaction.Redactor, messages: list[dict]) -> None:
                     fn["arguments"] = "{}"  # still valid JSON for the provider; the call's result says what it did
 
 
+def _better_ahead(escape) -> bool:
+    """Whether leaving this slow leg can help: `escape` (from the route) says whether a later leg is not crawling, can
+    take a call and has no open breaker. With none, the task stays: moving would trade a slow model for a crawling,
+    saturated or broken one, and on 2026-09-27 one Odin refresh task left Kimi K3 at 32 s a turn that way, crossed a
+    spend-blocked groq and two rate-limited Gemini legs, and ended on its cost cap. None (a caller that did not say)
+    keeps the old rule: a next leg is enough."""
+    return escape is None or bool(escape())
+
+
 class SlowLeg(RuntimeError):
     """The leg answers, but too slowly to finish in time (config.SLOW_LEG_TURN_S); jobs.leg_unavailable fails it over."""
 
 
-async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event | None = None, is_pilot: bool = False, user_tag: str | None = None, slow_turn_s: float | None = None, resume_messages: list[dict] | None = None, job_budget: Budget | None = None) -> tuple[Result, list[dict]]:
+async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event | None = None, is_pilot: bool = False, user_tag: str | None = None, slow_turn_s: float | None = None, resume_messages: list[dict] | None = None, job_budget: Budget | None = None, escape=None) -> tuple[Result, list[dict]]:
     res = Result(id=task.id, backend="api", model=task.model, started=now_iso())
     messages = resume_messages if resume_messages is not None else build_messages(task)
     try:
@@ -359,7 +369,7 @@ async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event |
     t0 = time.perf_counter()
     replayed: list[tuple[dict, str]] = []
     try:
-        await asyncio.wait_for(_planned_loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget, replayed),
+        await asyncio.wait_for(_planned_loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget, replayed, escape),
                                timeout=task.timeout_s)
         if res.status == "ok" and task.recipe:
             plans.record(task, [c for c, _ in replayed] + plans.calls_from(messages))
@@ -401,13 +411,13 @@ def _redacted_messages(task: Task, redactor: redaction.Redactor, messages: list[
 
 async def _planned_loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, messages: list[dict], tools: list[dict], usage: Usage,
                         warm: asyncio.Event | None, is_pilot: bool, user_tag: str | None, slow_turn_s: float | None,
-                        job_budget: Budget | None, replayed: list[tuple[dict, str]]) -> None:
+                        job_budget: Budget | None, replayed: list[tuple[dict, str]], escape=None) -> None:
     # A recipe task replays its cached plan first (plans.py): the reads its last passing run made land in the
     # user turn before the first model call, so the model answers instead of planning them again.
     replayed[:], res.plan = await plans.replay(task, sb)
     if replayed:
         messages[1]["content"] += "\n\n" + plans.replay_block(task.recipe, replayed)
-    await _loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget)
+    await _loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget, escape)
 
 
 def _close_task(task: Task, res: Result, sb: Sandbox, messages: list[dict], usage: Usage, rate_wait: list[float], t0: float,
