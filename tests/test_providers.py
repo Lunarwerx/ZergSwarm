@@ -144,3 +144,12 @@ def test_a_typed_model_is_never_sent_a_chat_task():
 
     with pytest.raises(ValueError, match="zswarm_decide"):
         asyncio.run(go())
+
+
+# Contract: a provider whose calls cost nothing (`free_calls`) charges nothing to the ledger or to a task's
+# max_cost_usd. Regression: NVIDIA's models carried list prices, so a free refresh job was stopped at the $0.25 cap
+# having spent nothing (2026-09-27).
+def test_a_free_calls_provider_charges_nothing():
+    free = [m for m, e in config.MODELS.items() if config.PROVIDERS[e["provider"]].get("free_calls")]
+    assert free
+    assert {m: config.cost_usd(m, 10**6, 10**6, 10**6) for m in free} == {m: 0.0 for m in free}

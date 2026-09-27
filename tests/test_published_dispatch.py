@@ -167,6 +167,21 @@ def test_a_saturated_last_leg_queues_again_instead_of_failing(monkeypatch, tmp_p
     assert any(m.get("tool_call_id") == "c1" for m in seen[1]["resume"]), "the requeued task keeps its transcript"
 
 
+def test_every_leg_of_an_ask_gets_its_turn_inside_the_budget_when_the_first_ones_crawl(monkeypatch):
+    """2026-09-27: GLM 5.3 Flash on NVIDIA was alive but took every Dredd boardroom seat's whole 120 s, so each seat
+    ended `ask timeout exhausted` with healthy legs behind it never tried."""
+    monkeypatch.setattr(dispatch, "_plan", lambda *a, **k: _plan(["crawls", "crawls-too", "answers"]))
+
+    async def fake_ask(client, prompt, model=None, **kw):
+        if model.startswith("crawls"):
+            await asyncio.sleep(10)
+        return Result(id="ask", backend="api", model=model, status="ok", answer=model, cost_usd=0.0)
+
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    res = asyncio.run(dispatch.ask_selected(_Mgr(), "q", timeout_s=0.6))
+    assert res.status == "ok" and res.answer == "answers" and res.failover == ["crawls", "crawls-too"]
+
+
 def test_no_candidates_is_explicit_failure(monkeypatch, tmp_path):
     t, job, seen = _setup(monkeypatch, tmp_path, [("rank:deepseek-v4-pro", "ok")])
     monkeypatch.setattr(selection, "plan", lambda *a, **k: _plan([]))

@@ -515,21 +515,30 @@ async def ask_selected(mgr, prompt, *, profile="general", route=True, **kw):
     if kw.get("images"):
         kw["images"] = [image_part(i)["image_url"]["url"] for i in kw["images"]]
     start, attempts = time.monotonic(), []
-    for candidate in candidates:
+    for n, candidate in enumerate(candidates):
         if (max_cost and sum(r.cost_usd or 0 for r in attempts) >= max_cost) or time.monotonic()-start >= timeout:
             res = _failure("ask", "api", candidate["model"], "ask budget exhausted across Swarm routes", plan)
             attempts.append(res)
             break
         leg_kw = dict(kw, reasoning_effort=candidate.get("reasoning_effort"), thinking=candidate.get("thinking"))
+        # A leg with another behind it gets an even share of what is left over the legs still to try, and never more
+        # than config.SLOW_LEG_TURN_S, the run path's crawl bar for one turn (all an ask is): every leg of the route
+        # gets its turn inside the budget, and one that is alive but crawling fails over. On 2026-09-27 GLM 5.3 Flash
+        # on NVIDIA took every Dredd boardroom seat's whole 120 s; on that seat's 13k-character prompt the five free
+        # NVIDIA legs took 22 s to over 240 s and Groq's and Gemini's 4 to 9 s, so 30 s a leg spent the budget on
+        # the free legs alone, and halving what was left gave the sixth leg (Groq, 4 s) 2 s.
+        left = timeout - (time.monotonic() - start)
+        cap = left if n == len(candidates) - 1 else min(left / (len(candidates) - n), config.SLOW_LEG_TURN_S)
         selection.claim(candidate.get("provider"))
         try:
             client = mgr.client_for(candidate["model"])
             if _dead(getattr(client, "pool", None)):
                 raise NoUsableKey(f"every {client.pool.provider} key is disabled; leg skipped before it started")
-            res = await asyncio.wait_for(ask(client, prompt, model=candidate["model"], **leg_kw),
-                                         max(.01, timeout-(time.monotonic()-start)))
+            res = await asyncio.wait_for(ask(client, prompt, model=candidate["model"], **leg_kw), max(.01, cap))
         except asyncio.TimeoutError:
-            res = _failure("ask", "api", candidate["model"], "ask timeout exhausted across Swarm routes", plan)
+            res = _failure("ask", "api", candidate["model"],
+                           f"SlowLeg: {candidate['model']} did not answer in {cap:.0f} s; the next leg has {left - cap:.0f} s"
+                           if cap < left else "ask timeout exhausted across Swarm routes", plan)
             res.cost_usd = None  # a cancelled HTTP request may still have been billed
         except RuntimeError as exc:
             res = _failure("ask", "api", candidate["model"], f"NoUsableKey: {exc}", plan)

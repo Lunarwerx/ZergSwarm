@@ -11,9 +11,11 @@
 # most calls, so it stays on tool-free work until it has been seen calling a tool. ctx is a conservative 128k.
 #
 # `free_calls`: a call costs nothing, so AUTO serves these routes before any paid route at the same floor, cheapest
-# capable model first (selection.py). Prices are the models' list prices, which keep that order and the savings
-# ledger comparable. `live_per_key = 1` spreads calls one per key across every account. Only models with published
-# scores are here (AUTO ranks on them): Nemotron 3.5 Lightning and 3 Super meet no floor Nemotron 3 Ultra does not.
+# capable model first (selection.py), an order taken from the published benchmark costs. Every price below is zero
+# because the calls are: list prices here charged free calls against a task's max_cost_usd, and a worker stopped
+# mid-task at the $0.25 cap having spent nothing (2026-09-27). `live_per_key = 1` spreads calls one per key across
+# every account. Only models with published scores are here (AUTO ranks on them): Nemotron 3.5 Lightning and
+# 3 Super meet no floor Nemotron 3 Ultra does not.
 
 base_url = "https://integrate.api.nvidia.com/v1"
 about = "NVIDIA's hosted catalog of open models (GLM, DeepSeek, Kimi, Nemotron). Free for testing, about 40 requests a minute."
@@ -34,7 +36,7 @@ api_id = "z-ai/glm-5.3-flash"
 benchmark_slug = "glm-5-3-flash"
 ctx = 131072
 tools = true
-price = {hit = 0.0285, miss = 0.045, out = 0.6}
+price = {hit = 0.0, miss = 0.0, out = 0.0}
 default_reasoning_effort = "max"
 default_thinking = true
 cc_effort = false
@@ -44,7 +46,7 @@ api_id = "deepseek-ai/deepseek-v4.1-flash"
 benchmark_slug = "deepseek-v4-1-flash"
 ctx = 131072
 tools = false
-price = {hit = 0.006, miss = 0.3, out = 1.2}
+price = {hit = 0.0, miss = 0.0, out = 0.0}
 default_reasoning_effort = "max"
 default_thinking = true
 cc_effort = false
@@ -54,7 +56,7 @@ api_id = "nvidia/nemotron-3-ultra-550b-a55b"
 benchmark_slug = "nvidia-nemotron-3-ultra-550b-a55b"
 ctx = 131072
 tools = true
-price = {hit = 0.6, miss = 0.6, out = 2.5}
+price = {hit = 0.0, miss = 0.0, out = 0.0}
 default_reasoning_effort = "max"
 default_thinking = true
 cc_effort = false
@@ -64,7 +66,7 @@ api_id = "moonshotai/kimi-k3"
 benchmark_slug = "kimi-k3"
 ctx = 131072
 tools = true
-price = {hit = 3.0, miss = 3.0, out = 15.0}
+price = {hit = 0.0, miss = 0.0, out = 0.0}
 default_reasoning_effort = "max"
 default_thinking = true
 cc_effort = false
@@ -74,7 +76,7 @@ api_id = "z-ai/glm-5.3"
 benchmark_slug = "glm-5-3"
 ctx = 131072
 tools = true
-price = {hit = 0.26, miss = 1.4, out = 4.4}
+price = {hit = 0.0, miss = 0.0, out = 0.0}
 default_reasoning_effort = "max"
 default_thinking = true
 cc_effort = false
