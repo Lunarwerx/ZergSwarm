@@ -334,7 +334,7 @@ so use `all` only for tasks that must run commands. The optional `cc` backend ne
 is not held to the folder, so treat it like `all`.
 
 **Where does my data go?**
-To the provider serving each task, and nowhere else. The console and the ledger stay on your machine. A free tier
+To the provider serving each task. The console and the ledger stay on your machine. A free tier
 may keep what it is sent, so for private code use a paid key or set `ZSWARM_REDACT_FREE_TIER=on`.
 
 ## 📄 License
