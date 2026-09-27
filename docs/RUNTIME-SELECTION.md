@@ -94,6 +94,14 @@ changes order only: floors still filter, and `benchmark_cost_usd` stays unbiased
 in the ledger row, beside the `load_bias` it was ranked with. Set `load_bias = 0` in
 `~/.zswarm/settings.toml` (or `ZSWARM_LOAD_BIAS=0`) to rank on cost alone.
 
+Two keys come before cost (2026-09-27). **Free first:** a provider whose file says `free_calls = true` (NVIDIA's
+trial keys) serves before any paid route that meets the same floors; inside the free group and inside the paid group
+the cheapest capable model still goes first, so a free route never means a bigger model than the task needs.
+**Crawling last:** per MODEL, not per provider (NVIDIA queues each model on its own), a model whose last call ran
+slower than `SLOW_LEG_TURN_S` a turn, or timed out, is tried after the capable models without that mark, still
+inside its free or paid group, until the mark ages out (`SLOW_MARK_S`) or one fast call clears it. The full order is
+star (`priority`), free before paid, not crawling before crawling, then biased cost and score.
+
 Refresh the two packaged JSON files together when evidence or API identities change, then run the
 selection/dispatch regression tests. A missing eligible route is an explicit error, never a reason
 to invent a model mapping, lower the capability requirement, or claim that the whole Swarm is dead.

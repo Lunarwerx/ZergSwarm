@@ -39,8 +39,8 @@ Today it grinds through that alone, or spins up subagents that still run on your
 people who use Claude Code, Claude Desktop or Codex every day and would rather spend that plan on the thinking.
 
 **ZergSwarm** takes that part. It is an MCP server, a CLI and a local web console. Your agent hands it a batch of
-tasks; it runs them all at once on the cheapest models that are good enough for the job (Gemini, Groq, Cerebras,
-DeepSeek, OpenRouter, Mistral, Hugging Face, or any OpenAI-compatible endpoint), and hands back each answer,
+tasks; it runs them all at once on the cheapest models that are good enough for the job (NVIDIA, Gemini, Groq,
+Cerebras, DeepSeek, OpenRouter, Mistral, Hugging Face, or any OpenAI-compatible endpoint), and hands back each answer,
 checked against the JSON schema you asked for. Your agent stays the one that plans, decides and verifies.
 
 The easiest install is to tell your agent (Claude Code, Codex, or the Code tab in Claude Desktop):
@@ -64,7 +64,7 @@ words, in a new chat: *"Use zswarm to review every file in src/ for bugs."* You 
 | --- | --- |
 | **Many workers, one call** | `zswarm_run` takes a list of tasks, each with its own folder, tool set and optional JSON schema, and runs them concurrently. |
 | **It picks the model** | Leave the model on `auto`: each task gets the cheapest configured model whose published test scores meet its bar. |
-| **Starts on a free key** | Gemini, Groq and Cerebras have free tiers that AUTO can use. Paste one key and it works. |
+| **Starts on a free key** | NVIDIA, Gemini, Groq and Cerebras have free tiers that AUTO can use. Paste one key and it works. NVIDIA's calls cost nothing, so AUTO tries its models first. |
 | **Keys that look after themselves** | A rate-limited key rests, a key out of credit is set aside, a key the provider refuses is never kept. When a provider runs dry, tasks move to the next capable model instead of stopping. |
 | **Every call costed** | Each task records its model, time and price. The console charts spend per day, per provider and per model. There is no spending limit unless you set one; set a daily limit and new work stops when a day reaches it. |
 | **Workers get only what you allow** | Each task names its tools: `none`, `read`, `edit` (files inside its folder) or `all` (adds a shell). |
@@ -117,7 +117,7 @@ set `ZSWARM_NO_SETUP=1` first; then `zswarm setup --client claude-code` connects
    `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
 2. **Add a key.** One is enough. In the console, pick a provider (Gemini or Groq is the quickest, both free), follow
    its *Get a key* link, and paste the key on its page. The
-   providers marked *picks automatically* (Gemini, Groq, Cerebras, DeepSeek and OpenRouter) are the ones ZergSwarm
+   providers marked *picks automatically* (NVIDIA, Gemini, Groq, Cerebras, DeepSeek and OpenRouter) are the ones ZergSwarm
    can choose models from by itself; the others you name when you want them. The key is
    checked with the provider straight away and kept only if it works. From the terminal: `zswarm keys add gemini`
    (it asks for the key, hidden, and checks it the same way).
@@ -213,6 +213,7 @@ keeps your comments.
 
 | provider | free tier | picks automatically | notes |
 | --- | :---: | :---: | --- |
+| NVIDIA | ✅ | ✅ | build.nvidia.com trial keys, about 40 requests a minute each: GLM 5.3 and 5.3 Flash, Kimi K3, DeepSeek V4.1 Flash, Nemotron 3 Ultra; testing only, and NVIDIA may keep what it is sent. Tried first, since its calls cost nothing; several keys paste in at once |
 | Gemini | ✅ | ✅ | Google's models; they can read images |
 | Groq | ✅ | ✅ | very fast open models, daily limits |
 | Cerebras | ✅ | ✅ | very fast open models, daily limits |
