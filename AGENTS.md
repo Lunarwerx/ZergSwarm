@@ -30,6 +30,10 @@ package, `zswarm/`, asyncio, no GPU. `zswarm.py` at the root runs it from a clon
 - A new user-facing knob shows up in the console, the API table in `docs/API.md`, and the README table.
 - Workers run with the tools their preset grants and nothing else; keep the loopback-only server and the
   console's Host and token checks intact.
+- Releases: at most ONE an hour, unless a person asked for this one in chat; every release posts to the
+  Discord. Land fixes as commits and write each under `## [Unreleased]` in CHANGELOG.md; when you cut a
+  version, rename that heading to `## [X.Y.Z] - <date>` and say what changed for someone using it. The
+  release workflow refuses a tag with no section, and a release's notes are never just a link.
 
 ## Checks
 
