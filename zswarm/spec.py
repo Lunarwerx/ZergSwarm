@@ -341,6 +341,17 @@ class Task:
         self.context_clear_at_least = max(0, int(self.context_clear_at_least or 0))
         if self.reasoning_effort is not None and self.reasoning_effort not in EFFORTS:
             raise ValueError(f"task {self.id}: reasoning_effort must be one of {EFFORTS}")
+        self._validate_output()
+        self._validate_acceptance()
+        if self.backend == "cc" and cc_tier(self.tools) in CC_WRITE_TIERS and self.confirm_write is not True:
+            raise ValueError(f"task {self.id}: tools {self.tools!r} on the cc backend runs Claude Code with every permission "
+                             "bypassed, which takes two opt-ins: the write preset AND confirm_write: true. Read-only work "
+                             "needs neither (tools: read)")
+        self._validate_recipe()
+        self._validate_shell_grants()
+
+    def _validate_output(self) -> None:
+        """The propose preset, the checkpoint share, the schema and the redaction: what shapes the worker's output."""
         names = self.tools if isinstance(self.tools, list) else str(self.tools).split(",")
         if self.backend == "cc" and "propose" in {str(n).strip() for n in names}:  # stripped as specs_for does: "read, propose" too
             # cc hands the worker Claude Code's own write tools for any preset it does not know: the split would be a lie.
@@ -356,6 +367,9 @@ class Task:
         if redacting and self.backend == "cc":
             # Claude Code runs its own tools, out of reach of the Sandbox: a redaction asked for there would silently not happen.
             raise ValueError(f"task {self.id}: redact applies to the api backend's sandboxed tools; a cc worker's tools cannot be redacted")
+
+    def _validate_acceptance(self) -> None:
+        """The acceptance criteria and the cc backend's result_file contract."""
         if isinstance(self.acceptance, str):
             self.acceptance = [self.acceptance]
         if not isinstance(self.acceptance, list) or not all(isinstance(c, str) and c.strip() for c in self.acceptance):
@@ -365,17 +379,18 @@ class Task:
                 raise ValueError(f"task {self.id}: result_file is the cc backend's one-file contract; an api task returns "
                                  "structured results through schema + submit_result instead")
             self.result_file = str((Path(self.cwd) / self.result_file).resolve())
-        if self.backend == "cc" and cc_tier(self.tools) in CC_WRITE_TIERS and self.confirm_write is not True:
-            raise ValueError(f"task {self.id}: tools {self.tools!r} on the cc backend runs Claude Code with every permission "
-                             "bypassed, which takes two opt-ins: the write preset AND confirm_write: true. Read-only work "
-                             "needs neither (tools: read)")
-        if self.recipe is not None:
-            from .plans import RECIPE_RE  # plans imports this module; the rule lives beside the cache it guards
 
-            if not RECIPE_RE.match(str(self.recipe)):
-                raise ValueError(f"task {self.id}: recipe must be a name (letters, digits, _ . : -, at most 80), not free text")
-            if self.backend != "api":
-                raise ValueError(f"task {self.id}: recipe plans replay on the api backend only; cc runs Claude Code's own loop")
+    def _validate_recipe(self) -> None:
+        if self.recipe is None:
+            return
+        from .plans import RECIPE_RE  # plans imports this module; the rule lives beside the cache it guards
+
+        if not RECIPE_RE.match(str(self.recipe)):
+            raise ValueError(f"task {self.id}: recipe must be a name (letters, digits, _ . : -, at most 80), not free text")
+        if self.backend != "api":
+            raise ValueError(f"task {self.id}: recipe plans replay on the api backend only; cc runs Claude Code's own loop")
+
+    def _validate_shell_grants(self) -> None:
         if isinstance(self.shell_grants, str):
             self.shell_grants = [self.shell_grants]
         if self.shell_grants and self.backend == "cc":  # only the api worker's bash tool reads them; say so, not ignore them

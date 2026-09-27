@@ -135,33 +135,45 @@ class Capability:
         denied: set[str] = set()
         inline: dict[str, list[dict]] = {}
         for p in d.get("permissions") or []:
-            name = p.get("identifier") if isinstance(p, dict) else p
-            if not isinstance(name, str) or name not in known_permissions():
-                raise ValueError(f"capability {ident}: unknown permission {name!r}; known: {known_permissions()}")
-            if name.startswith("deny-"):
-                denied.add(name[5:])
-                continue
-            # `in`, not `or`: the "none" preset is an empty list, and must grant nothing rather than a tool called "none".
-            names = PRESETS[name] if name in PRESETS else [name.removeprefix("allow-")]
-            granted += [t for t in names if t not in granted]
-            if isinstance(p, dict) and (set(p) - {"identifier"}):
-                if name in PRESETS or set(p) - {"identifier", "allow", "deny"}:
-                    raise ValueError(f"capability {ident}: only a single tool takes an inline allow/deny scope, not {p}")
-                inline.setdefault(name.removeprefix("allow-"), []).append(p)
+            _read_permission(p, ident, granted, denied, inline)
         tools = tuple(t for t in granted if t not in denied)  # deny-<tool> beats every grant of it
-        scopes: dict[str, Scope] = {}
-        for t in tools:
-            if t not in PATH_TOOLS:
-                continue
-            own = inline.get(t, [])
-            allow = tuple(g for p in own for g in _globs(p.get("allow"), ident, ())) or base_allow
-            deny = tuple(dict.fromkeys(base_deny + tuple(g for p in own for g in _globs(p.get("deny"), ident, ()))))
-            scopes[t] = Scope(allow=allow, deny=deny)
+        scopes = _path_scopes(tools, inline, ident, base_allow, base_deny)
         cap = Capability(ident, str(d.get("description") or ""), tools, {t: s for t, s in scopes.items() if s != Scope()})
         if cap.scoped and "bash" in tools:
             raise ValueError(f"capability {ident}: grants bash alongside a path scope, and a shell command can reach any "
                              "path, so the scope would be a promise the sandbox cannot keep; add \"deny-bash\" or drop the scope")
         return cap
+
+
+def _read_permission(p, ident: str, granted: list[str], denied: set[str], inline: dict[str, list[dict]]) -> None:
+    """Fold one `permissions` entry into the grant being built: its tools, a deny-<tool>, or an inline scope."""
+    name = p.get("identifier") if isinstance(p, dict) else p
+    if not isinstance(name, str) or name not in known_permissions():
+        raise ValueError(f"capability {ident}: unknown permission {name!r}; known: {known_permissions()}")
+    if name.startswith("deny-"):
+        denied.add(name[5:])
+        return
+    # `in`, not `or`: the "none" preset is an empty list, and must grant nothing rather than a tool called "none".
+    names = PRESETS[name] if name in PRESETS else [name.removeprefix("allow-")]
+    granted += [t for t in names if t not in granted]
+    if isinstance(p, dict) and (set(p) - {"identifier"}):
+        if name in PRESETS or set(p) - {"identifier", "allow", "deny"}:
+            raise ValueError(f"capability {ident}: only a single tool takes an inline allow/deny scope, not {p}")
+        inline.setdefault(name.removeprefix("allow-"), []).append(p)
+
+
+def _path_scopes(tools: tuple[str, ...], inline: dict[str, list[dict]], ident: str,
+                 base_allow: tuple[str, ...], base_deny: tuple[str, ...]) -> dict[str, Scope]:
+    """Each granted path tool's scope: its inline allow (else the capability's), plus every deny that applies."""
+    scopes: dict[str, Scope] = {}
+    for t in tools:
+        if t not in PATH_TOOLS:
+            continue
+        own = inline.get(t, [])
+        allow = tuple(g for p in own for g in _globs(p.get("allow"), ident, ())) or base_allow
+        deny = tuple(dict.fromkeys(base_deny + tuple(g for p in own for g in _globs(p.get("deny"), ident, ()))))
+        scopes[t] = Scope(allow=allow, deny=deny)
+    return scopes
 
 
 def is_grant_file(path: Path, roots: list[Path]) -> bool:

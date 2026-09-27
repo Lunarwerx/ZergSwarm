@@ -183,60 +183,88 @@ async def _loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, me
     # Stale tool results past the task's token trigger go out as fetch_output pointers; `messages` stays the whole transcript.
     editor = ContextEditor(task.context_trigger, task.context_clear_at_least, spill=sb.spill)
     gate = _GoalGate(client, task, usage, user_tag) if task.done_when else None
-    # The worker's own cap and the job's are reserved against BEFORE each turn goes out, and settled to the exact
-    # cost after it (budget.py): a turn that would cross either is shrunk or never sent, instead of found out later.
-    worker = Budget(task.max_cost_usd, "cost budget (max_cost_usd)") if task.max_cost_usd else None
-    ceilings = [b for b in (worker, job_budget) if b is not None]
-    priced = top_rates(task.model) is not None
-    checkpointed = False
+    budget = _TurnBudget(task, job_budget)
     for turn in range(task.max_turns + 1):
         exhausted = turn >= task.max_turns
         if exhausted:
             messages.append({"role": "user", "content": NUDGE})
             res.add_taint("B")
-        elif turn and ceilings and priced:
-            checkpointed = _budget_note(task, messages, worker, job_budget, turn, checkpointed)
-        send_tools = tools if (tools and not exhausted) else None
-        plan = await plan_turn(task.model, editor.view(messages), send_tools, task.max_tokens, ceilings)
-        if isinstance(plan, str):
-            res.status, res.error = "error", plan  # run_api_task hands back what it gathered as a partial answer
-            res.add_taint("C")  # a cost ceiling (the worker's or the job's) refused the next turn
+        else:
+            budget.note(task, messages, turn)
+        r = await _call_turn(client, task, res, editor, messages, tools, budget.ceilings, exhausted, user_tag, slow_turn_s)
+        if r is None:
             return
-        max_tokens, hold = plan
-        try:
-            r = await client.chat(
-                editor.view(messages), model=task.model, tools=send_tools, max_tokens=max_tokens,
-                thinking=task.thinking if not exhausted else False, reasoning_effort=task.reasoning_effort, temperature=task.temperature, user=user_tag,
-                # A leg with a next one leaves a rate-limited pool after slow_turn_s; the LAST leg, with nowhere to go,
-                # after config.SATURATED_REST_S, as a PoolSaturated error instead of a silent wait to timeout_s
-                # (client._post's rest_budget_s; job 20260924-152821-54f1).
-                rest_budget_s=slow_turn_s if slow_turn_s else config.SATURATED_REST_S, last_leg=not slow_turn_s,
-            )
-        except ApiError:
-            release(ceilings, hold)  # the provider refused the call with a status: nothing was billed
-            raise
-        except BaseException:
-            settle_turn(ceilings, hold, None)  # cut off mid-call (timeout, cancel): it may have been billed, so the hold stays spent
-            raise
-        settle_turn(ceilings, hold, r.cost_usd)
-        if warm is not None and is_pilot:
-            warm.set()
-        usage.add(r.usage)
-        _note_upstream(res, r)
-        _note_truncation(res, r)
-        # A model with no price on record costs None for the whole task: not measured, never zero.
-        res.cost_usd = None if r.cost_usd is None else (res.cost_usd or 0.0) + r.cost_usd
-        res.turns += 1
-        if slow_turn_s and res.turns >= config.SLOW_LEG_MIN_TURNS and res.api_seconds / res.turns > slow_turn_s:
-            raise SlowLeg(f"SlowLeg: {task.model} averaged {res.api_seconds / res.turns:.0f}s a turn over {res.turns} turns "
-                          f"(budget {slow_turn_s:.0f}s) - failing over while the task still has time")
-        if tools and not exhausted and not r.tool_calls:
-            _promote_text_calls(res, r, tools)
+        _account_turn(task, res, r, usage, warm, is_pilot, slow_turn_s, tools, exhausted)
         messages.append(dict(r.message))
         done, empty_retries = await _after_reply(task, res, sb, messages, r, empty_retries, schema_state, guard, gate, exhausted)
         if done:
             return
     res.status, res.error = "error", "turn budget exhausted without a final answer"
+
+
+class _TurnBudget:
+    """The worker's own cap and the job's are reserved against BEFORE each turn goes out, and settled to the exact
+    cost after it (budget.py): a turn that would cross either is shrunk or never sent, instead of found out later."""
+
+    def __init__(self, task: Task, job_budget: Budget | None) -> None:
+        self.worker = Budget(task.max_cost_usd, "cost budget (max_cost_usd)") if task.max_cost_usd else None
+        self.job_budget = job_budget
+        self.ceilings = [b for b in (self.worker, job_budget) if b is not None]
+        self.priced = top_rates(task.model) is not None
+        self.checkpointed = False
+
+    def note(self, task: Task, messages: list[dict], turn: int) -> None:
+        """The budget note for a turn that is not the last (_budget_note), when there is a priced ceiling to report."""
+        if turn and self.ceilings and self.priced:
+            self.checkpointed = _budget_note(task, messages, self.worker, self.job_budget, turn, self.checkpointed)
+
+
+async def _call_turn(client: DeepSeekClient, task: Task, res: Result, editor: ContextEditor, messages: list[dict], tools: list[dict],
+                     ceilings: list[Budget], exhausted: bool, user_tag: str | None, slow_turn_s: float | None) -> ChatResult | None:
+    """Plan one turn against the ceilings and send it. None when a ceiling refused it; res then carries the error."""
+    send_tools = tools if (tools and not exhausted) else None
+    plan = await plan_turn(task.model, editor.view(messages), send_tools, task.max_tokens, ceilings)
+    if isinstance(plan, str):
+        res.status, res.error = "error", plan  # run_api_task hands back what it gathered as a partial answer
+        res.add_taint("C")  # a cost ceiling (the worker's or the job's) refused the next turn
+        return None
+    max_tokens, hold = plan
+    try:
+        r = await client.chat(
+            editor.view(messages), model=task.model, tools=send_tools, max_tokens=max_tokens,
+            thinking=task.thinking if not exhausted else False, reasoning_effort=task.reasoning_effort, temperature=task.temperature, user=user_tag,
+            # A leg with a next one leaves a rate-limited pool after slow_turn_s; the LAST leg, with nowhere to go,
+            # after config.SATURATED_REST_S, as a PoolSaturated error instead of a silent wait to timeout_s
+            # (client._post's rest_budget_s; job 20260924-152821-54f1).
+            rest_budget_s=slow_turn_s if slow_turn_s else config.SATURATED_REST_S, last_leg=not slow_turn_s,
+        )
+    except ApiError:
+        release(ceilings, hold)  # the provider refused the call with a status: nothing was billed
+        raise
+    except BaseException:
+        settle_turn(ceilings, hold, None)  # cut off mid-call (timeout, cancel): it may have been billed, so the hold stays spent
+        raise
+    settle_turn(ceilings, hold, r.cost_usd)
+    return r
+
+
+def _account_turn(task: Task, res: Result, r: ChatResult, usage: Usage, warm: asyncio.Event | None, is_pilot: bool,
+                  slow_turn_s: float | None, tools: list[dict], exhausted: bool) -> None:
+    """Book a reply onto the task: usage, provider, cost, turn count; fail a leg that is too slow over; promote
+    tool calls written as text."""
+    if warm is not None and is_pilot:
+        warm.set()
+    usage.add(r.usage)
+    _note_upstream(res, r)
+    _note_truncation(res, r)
+    # A model with no price on record costs None for the whole task: not measured, never zero.
+    res.cost_usd = None if r.cost_usd is None else (res.cost_usd or 0.0) + r.cost_usd
+    res.turns += 1
+    if slow_turn_s and res.turns >= config.SLOW_LEG_MIN_TURNS and res.api_seconds / res.turns > slow_turn_s:
+        raise SlowLeg(f"SlowLeg: {task.model} averaged {res.api_seconds / res.turns:.0f}s a turn over {res.turns} turns "
+                      f"(budget {slow_turn_s:.0f}s) - failing over while the task still has time")
+    if tools and not exhausted and not r.tool_calls:
+        _promote_text_calls(res, r, tools)
 
 
 def _budget_note(task: Task, messages: list[dict], worker: Budget | None, job_budget: Budget | None, turn: int, checkpointed: bool) -> bool:
@@ -291,24 +319,12 @@ async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event |
     res = Result(id=task.id, backend="api", model=task.model, started=now_iso())
     messages = resume_messages if resume_messages is not None else build_messages(task)
     try:
-        tools = specs_for(task.tools)
-        # Any sandbox tool can produce a capped or cleared output, so any worker with one can page it back.
-        if tools and SPILL_TOOL not in {t["function"]["name"] for t in tools}:
-            tools += specs_for([SPILL_TOOL])
-        tools += [submit_result_spec(task.schema)] if task.schema else []
-        # The grant the sandbox enforces: the task's capability, or the one its tools preset has always meant.
-        grant = Capability.from_dict(task.capability) if isinstance(task.capability, dict) else capability.from_tools(task.tools)
-        # Decided per LEG, not per task: a failover from a paid leg onto a free tier turns the machine switch on.
-        # Inside this try so a bad ZSWARM_REDACT_FREE_TIER ends the task with a readable error, not a crash.
-        redactor = redaction.for_task(task.redact, config.free_tier(task.model))
+        tools, grant, redactor = _task_grant(task)
     except ValueError as e:
         res.status, res.error, res.finished = "error", str(e), now_iso()
         return res, messages
     if redactor is not None:
-        if resume_messages is None:
-            messages = build_messages(task, redactor)  # inlined task.files reach the provider too: redact them
-        else:
-            _redact_resumed(redactor, messages)
+        messages = _redacted_messages(task, redactor, messages, resumed=resume_messages is not None)
     # The sandbox runs only what the model was offered: the privilege split holds even when an injected page
     # talks a `propose` worker into calling write_file or bash by name.
     sb = open_sandbox(task.runtime, task.cwd, roots=task.roots, envelope=task.envelope, writable=task.writable, spill_dir=config.SPILL_DIR, web_hosts=task.web_hosts, shell_grants=task.shell_grants, allowed=[t["function"]["name"] for t in tools], capability=grant, redactor=redactor)
@@ -324,17 +340,9 @@ async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event |
     RATE_WAIT.set(rate_wait)
     t0 = time.perf_counter()
     replayed: list[tuple[dict, str]] = []
-
-    async def planned_loop() -> None:
-        # A recipe task replays its cached plan first (plans.py): the reads its last passing run made land in the
-        # user turn before the first model call, so the model answers instead of planning them again.
-        replayed[:], res.plan = await plans.replay(task, sb)
-        if replayed:
-            messages[1]["content"] += "\n\n" + plans.replay_block(task.recipe, replayed)
-        await _loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget)
-
     try:
-        await asyncio.wait_for(planned_loop(), timeout=task.timeout_s)
+        await asyncio.wait_for(_planned_loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget, replayed),
+                               timeout=task.timeout_s)
         if res.status == "ok" and task.recipe:
             plans.record(task, [c for c, _ in replayed] + plans.calls_from(messages))
     except asyncio.TimeoutError:
@@ -347,37 +355,81 @@ async def run_api_task(client: DeepSeekClient, task: Task, warm: asyncio.Event |
     except Exception as e:  # noqa: BLE001
         res.status, res.error = "error", f"{type(e).__name__}: {e}\n" + traceback.format_exc(limit=3)
     finally:
-        sb.close()  # a background job (bash_start) never outlives its task, however the task ended
-        if warm is not None and is_pilot:
-            warm.set()  # a pilot that failed must still release the others
-        res.usage = usage.as_dict()
-        res.seconds = round(time.perf_counter() - t0, 3)
-        res.rested_s = round(min(rate_wait[0], res.seconds), 3)
-        res.tool_calls = sb.tool_calls
-        res.files_changed = sorted(set(sb.files_changed))
-        res.proposals = list(sb.proposals)
-        res.edit_snapshot = survival.snapshot(sb.originals)  # journalled by jobs._journal, scored later by survival.score_due
-        res.web_approvals = list(sb.web.approvals)
-        try:
-            check_receipts(task, res, sb)
-        except Exception as e:  # noqa: BLE001 - a verdict bug drops the verdict, never the finished result
-            res.citations = {"verdict": "error", "resolved": 0, "receipts": len(sb.receipts), "error": f"{type(e).__name__}: {e}"}
-        if task.acceptance:  # decided against the disk and the receipt ledger, never the worker's own claim
-            try:
-                res.acceptance = decide_acceptance(task.acceptance, sb, res.files_changed, sb.receipts)
-            except Exception as e:  # noqa: BLE001 - a checker bug leaves every criterion UNVERIFIED, never the result lost
-                res.acceptance = [{"criterion": c, "verdict": "UNVERIFIED", "detail": f"checker error {type(e).__name__}: {e}"} for c in task.acceptance]
-        res.finished = now_iso()
-        if res.status in ("timeout", "error", "loop") and not res.answer:
-            res.answer = partial_evidence(messages)  # the turns it spent are not thrown away with the task
-        if sb.redactor is not None:
-            res.redactions = dict(sb.redactor.counts)
-        # After the receipt check, which matches the answer against the redacted outputs the model saw. The answer
-        # and data stay on this machine: hand the caller real values, not tags it cannot map. Unconditional, since a
-        # non-redacting leg can still echo tags an earlier leg of the same task left in the transcript.
-        res.answer = redaction.restore_deep(res.answer)
-        res.data = redaction.restore_deep(res.data)
+        _close_task(task, res, sb, messages, usage, rate_wait, t0, warm, is_pilot)
     return res, messages
+
+
+def _task_grant(task: Task) -> tuple[list[dict], Capability, redaction.Redactor | None]:
+    """(tools offered, the grant the sandbox enforces, the leg's redactor). A ValueError ends the task readably."""
+    tools = specs_for(task.tools)
+    # Any sandbox tool can produce a capped or cleared output, so any worker with one can page it back.
+    if tools and SPILL_TOOL not in {t["function"]["name"] for t in tools}:
+        tools += specs_for([SPILL_TOOL])
+    tools += [submit_result_spec(task.schema)] if task.schema else []
+    # The grant the sandbox enforces: the task's capability, or the one its tools preset has always meant.
+    grant = Capability.from_dict(task.capability) if isinstance(task.capability, dict) else capability.from_tools(task.tools)
+    # Decided per LEG, not per task: a failover from a paid leg onto a free tier turns the machine switch on.
+    # Raised inside run_api_task's try so a bad ZSWARM_REDACT_FREE_TIER ends the task with a readable error, not a crash.
+    redactor = redaction.for_task(task.redact, config.free_tier(task.model))
+    return tools, grant, redactor
+
+
+def _redacted_messages(task: Task, redactor: redaction.Redactor, messages: list[dict], resumed: bool) -> list[dict]:
+    if not resumed:
+        return build_messages(task, redactor)  # inlined task.files reach the provider too: redact them
+    _redact_resumed(redactor, messages)
+    return messages
+
+
+async def _planned_loop(client: DeepSeekClient, task: Task, res: Result, sb: Sandbox, messages: list[dict], tools: list[dict], usage: Usage,
+                        warm: asyncio.Event | None, is_pilot: bool, user_tag: str | None, slow_turn_s: float | None,
+                        job_budget: Budget | None, replayed: list[tuple[dict, str]]) -> None:
+    # A recipe task replays its cached plan first (plans.py): the reads its last passing run made land in the
+    # user turn before the first model call, so the model answers instead of planning them again.
+    replayed[:], res.plan = await plans.replay(task, sb)
+    if replayed:
+        messages[1]["content"] += "\n\n" + plans.replay_block(task.recipe, replayed)
+    await _loop(client, task, res, sb, messages, tools, usage, warm, is_pilot, user_tag, slow_turn_s, job_budget)
+
+
+def _close_task(task: Task, res: Result, sb: Sandbox, messages: list[dict], usage: Usage, rate_wait: list[float], t0: float,
+                warm: asyncio.Event | None, is_pilot: bool) -> None:
+    """Everything run_api_task does however the task ended: close the sandbox, release the pilot, fill the result."""
+    sb.close()  # a background job (bash_start) never outlives its task, however the task ended
+    if warm is not None and is_pilot:
+        warm.set()  # a pilot that failed must still release the others
+    res.usage = usage.as_dict()
+    res.seconds = round(time.perf_counter() - t0, 3)
+    res.rested_s = round(min(rate_wait[0], res.seconds), 3)
+    res.tool_calls = sb.tool_calls
+    res.files_changed = sorted(set(sb.files_changed))
+    res.proposals = list(sb.proposals)
+    res.edit_snapshot = survival.snapshot(sb.originals)  # journalled by jobs._journal, scored later by survival.score_due
+    res.web_approvals = list(sb.web.approvals)
+    _judge_task(task, res, sb)
+    res.finished = now_iso()
+    if res.status in ("timeout", "error", "loop") and not res.answer:
+        res.answer = partial_evidence(messages)  # the turns it spent are not thrown away with the task
+    if sb.redactor is not None:
+        res.redactions = dict(sb.redactor.counts)
+    # After the receipt check, which matches the answer against the redacted outputs the model saw. The answer
+    # and data stay on this machine: hand the caller real values, not tags it cannot map. Unconditional, since a
+    # non-redacting leg can still echo tags an earlier leg of the same task left in the transcript.
+    res.answer = redaction.restore_deep(res.answer)
+    res.data = redaction.restore_deep(res.data)
+
+
+def _judge_task(task: Task, res: Result, sb: Sandbox) -> None:
+    """The receipt verdict and the acceptance criteria; a bug in either drops its verdict, never the result."""
+    try:
+        check_receipts(task, res, sb)
+    except Exception as e:  # noqa: BLE001 - a verdict bug drops the verdict, never the finished result
+        res.citations = {"verdict": "error", "resolved": 0, "receipts": len(sb.receipts), "error": f"{type(e).__name__}: {e}"}
+    if task.acceptance:  # decided against the disk and the receipt ledger, never the worker's own claim
+        try:
+            res.acceptance = decide_acceptance(task.acceptance, sb, res.files_changed, sb.receipts)
+        except Exception as e:  # noqa: BLE001 - a checker bug leaves every criterion UNVERIFIED, never the result lost
+            res.acceptance = [{"criterion": c, "verdict": "UNVERIFIED", "detail": f"checker error {type(e).__name__}: {e}"} for c in task.acceptance]
 
 
 def _note_upstream(res: Result, r: ChatResult) -> None:

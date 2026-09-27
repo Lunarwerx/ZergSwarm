@@ -231,3 +231,40 @@ def test_only_the_shared_server_tells_chats_to_pass_an_absolute_cwd():
     from zswarm.mcp_server import mcp
     assert "ABSOLUTE cwd" not in (mcp._lowlevel_server.instructions or "")  # stdio chats default to their own folder
     assert "ABSOLUTE cwd" in shared.SHARED_NOTE  # the HTTP half is asserted end to end in the two-client test
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the proactor event loop is Windows-only")
+def test_a_client_dropped_mid_accept_does_not_close_the_listener(monkeypatch):
+    # CPython's proactor serving loop closes the LISTENING socket on any accept error; one client that vanished
+    # mid-accept (WinError 64) left the shared server alive, running jobs, and deaf (2026-09-27).
+    from asyncio import windows_events
+
+    real, calls = windows_events.IocpProactor.accept, []
+
+    def first_client_vanishes(self, listener):
+        calls.append(1)
+        if len(calls) == 1:
+            f = self._loop.create_future()
+            f.set_exception(OSError(22, "The specified network name is no longer available", None, 64))
+            return f
+        return real(self, listener)
+
+    monkeypatch.setattr(windows_events.IocpProactor, "accept", first_client_vanishes)
+    shared.keep_listening_through_dropped_clients()
+
+    async def go():
+        served = asyncio.Event()
+
+        async def on_client(reader, writer):
+            served.set()
+            writer.close()
+
+        server = await asyncio.start_server(on_client, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 5)
+        await asyncio.wait_for(served.wait(), 5)
+        w.close()
+        server.close()
+
+    asyncio.run(go())
+    assert len(calls) >= 2  # the vanished client's accept was retried, and the next client was served

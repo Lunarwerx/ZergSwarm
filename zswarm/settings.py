@@ -158,6 +158,11 @@ def _find(provider: str, fingerprint: str) -> str:
     raise SettingsError(f"no {provider} key has fingerprint {fingerprint!r}")
 
 
+def split_keys(text: str) -> list[str]:
+    """Several pasted keys -> the keys, in order and once each: one per line, or split by spaces, commas or semicolons."""
+    return list(dict.fromkeys(k for k in re.split(r"[\s,;]+", text or "") if k))
+
+
 def add_key(provider: str, key: str) -> dict:
     key = (key or "").strip()
     if not key or any(c.isspace() for c in key) or len(key) < 8:

@@ -161,57 +161,91 @@ async def run_verified(task: Task, attempt: Attempt, judge: Judge | None = None,
     Returns the last attempt's result with every attempt's and judge call's spend folded in and `verify` filled; a
     task that never passed comes back status error, `VerifyFailed:`, with `verify.escalation` holding the history."""
     check = check or run_command  # looked up at call time, so a test can stand in for the shell
-    spec = task.verify
-    attempts = spec["retries"] + 1
+    attempts = task.verify["retries"] + 1
     history: list[dict] = []
     earlier: list[Result] = []
     changed: set[str] = set()
     note = ""
     reason = ""
     for n in range(1, attempts + 1):
-        spent = sum(r.cost_usd or 0.0 for r in earlier)
-        run = dataclasses.replace(task, prompt=task.prompt.rstrip() + ("\n\n" + note if note else ""),
-                                  max_cost_usd=max(task.max_cost_usd - spent, 0.0001) if task.max_cost_usd else task.max_cost_usd)
-        res, transcript = await attempt(run, n == 1)
+        res, transcript = await attempt(_attempt_task(task, note, earlier), n == 1)
         changed.update(res.files_changed)
-        entry: dict = {"attempt": n, "status": res.status, "cost_usd": res.cost_usd, "answer_head": (res.answer or "")[:FEEDBACK_ANSWER_CHARS]}
-        passed = res.status == "ok"
-        if not passed:
-            entry["error"] = (res.error or "")[:300]
-            reason = f"the worker itself ended {res.status} on attempt {n}"
-        if passed and spec["command"]:
-            result = await check(spec["command"], task.cwd, spec["timeout_s"])
-            entry.update(result)
-            passed = result["exit"] == 0
-            if result["exit"] is None:
-                reason = f"the check could not run: {result['output_tail']}"
-            elif not passed:
-                reason = f"check exited {result['exit']}"
-        if passed and spec["judge"]:
-            if judge is None:
-                passed, reason = False, "no judge is wired for this backend"
-            else:
-                try:
-                    j = await judge(judge_prompt(task, res, entry if spec["command"] else None), JUDGE_SYSTEM)
-                except (ValueError, KeyError) as e:  # no judge role wired on this machine
-                    j = None
-                    passed, reason = False, f"the judge could not run: {e}"
-                if j is not None:
-                    earlier.append(j)
-                    entry["verdict"] = j.data if isinstance(j.data, dict) else None
-                    if j.status != "ok" or entry["verdict"] is None:
-                        passed, reason = False, f"the judge could not run: {(j.error or 'no verdict returned')[:200]}"
-                    else:
-                        passed = verdict_passed(j.data)
-                        reason = "" if passed else "judge verdict FAIL"
+        entry, passed, reason = await _check_attempt(task, res, n, check, judge, earlier, reason)
         history.append(entry)
-        final = passed or n == attempts or res.status != "ok" or reason.startswith(("the check could not", "the judge could not", "no judge"))
-        if not final and task.max_cost_usd and sum(r.cost_usd or 0.0 for r in earlier + [res]) >= task.max_cost_usd:
+        final = passed or n == attempts or _unretryable(res, reason)
+        if not final and _budget_spent(task, earlier + [res]):
             final, reason = True, f"{reason}; max_cost_usd ${task.max_cost_usd:.4f} spent before another attempt"
         if final:
             break
         note = feedback(task, entry, n, attempts)
         earlier.append(res)
+    _settle(res, earlier, changed, history, passed, reason)
+    return res, transcript
+
+
+def _attempt_task(task: Task, note: str, earlier: list[Result]) -> Task:
+    """The task as the next attempt sees it: the last failure appended, and only the budget earlier spend left."""
+    spent = sum(r.cost_usd or 0.0 for r in earlier)
+    return dataclasses.replace(task, prompt=task.prompt.rstrip() + ("\n\n" + note if note else ""),
+                               max_cost_usd=max(task.max_cost_usd - spent, 0.0001) if task.max_cost_usd else task.max_cost_usd)
+
+
+async def _check_attempt(task: Task, res: Result, n: int, check, judge: Judge | None, earlier: list[Result],
+                         reason: str) -> tuple[dict, bool, str]:
+    """One attempt's history entry and verdict: the worker's own status, then the command, then the judge, each only
+    once the one before has passed. `reason` is carried in unchanged when nothing here fails."""
+    entry: dict = {"attempt": n, "status": res.status, "cost_usd": res.cost_usd, "answer_head": (res.answer or "")[:FEEDBACK_ANSWER_CHARS]}
+    passed = res.status == "ok"
+    if not passed:
+        entry["error"] = (res.error or "")[:300]
+        reason = f"the worker itself ended {res.status} on attempt {n}"
+    if passed and task.verify["command"]:
+        passed, reason = await _run_check(task, check, entry, reason)
+    if passed and task.verify["judge"]:
+        passed, reason = await _run_judge(task, res, entry, judge, earlier)
+    return entry, passed, reason
+
+
+async def _run_check(task: Task, check, entry: dict, reason: str) -> tuple[bool, str]:
+    spec = task.verify
+    result = await check(spec["command"], task.cwd, spec["timeout_s"])
+    entry.update(result)
+    passed = result["exit"] == 0
+    if result["exit"] is None:
+        reason = f"the check could not run: {result['output_tail']}"
+    elif not passed:
+        reason = f"check exited {result['exit']}"
+    return passed, reason
+
+
+async def _run_judge(task: Task, res: Result, entry: dict, judge: Judge | None, earlier: list[Result]) -> tuple[bool, str]:
+    """The judge's verdict on this attempt; its call's spend joins `earlier` so it is folded in and counts to the budget."""
+    if judge is None:
+        return False, "no judge is wired for this backend"
+    try:
+        j = await judge(judge_prompt(task, res, entry if task.verify["command"] else None), JUDGE_SYSTEM)
+    except (ValueError, KeyError) as e:  # no judge role wired on this machine
+        return False, f"the judge could not run: {e}"
+    earlier.append(j)
+    entry["verdict"] = j.data if isinstance(j.data, dict) else None
+    if j.status != "ok" or entry["verdict"] is None:
+        return False, f"the judge could not run: {(j.error or 'no verdict returned')[:200]}"
+    passed = verdict_passed(j.data)
+    return passed, "" if passed else "judge verdict FAIL"
+
+
+def _unretryable(res: Result, reason: str) -> bool:
+    """A worker that itself failed, or a check or judge that could not run: another attempt would only spend."""
+    return res.status != "ok" or reason.startswith(("the check could not", "the judge could not", "no judge"))
+
+
+def _budget_spent(task: Task, spend: list[Result]) -> bool:
+    return bool(task.max_cost_usd) and sum(r.cost_usd or 0.0 for r in spend) >= task.max_cost_usd
+
+
+def _settle(res: Result, earlier: list[Result], changed: set[str], history: list[dict], passed: bool, reason: str) -> None:
+    """Fold every earlier attempt and judge call into the kept result and fill its `verify`; a task that never passed
+    becomes status error with an escalation record."""
     for e in earlier:
         _fold(res, e)
         res.add_taint("R", e.taint)  # the answer kept is a re-run of a failed attempt, whose own letters stay on it
@@ -224,4 +258,3 @@ async def run_verified(task: Task, attempt: Attempt, judge: Judge | None = None,
         if res.status == "ok":
             res.status = "error"
             res.error = f"VerifyFailed: {reason} after {len(history)} attempt(s); verify.history holds every attempt"
-    return res, transcript

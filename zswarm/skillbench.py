@@ -101,28 +101,50 @@ def aggregate(runs: list[dict]) -> dict:
     for skill in sorted({r["skill"] for r in runs}):
         rs = [r for r in runs if r["skill"] == skill]
         graded = [r for r in rs if r.get("verdicts") is not None]
-        by_cfg = {}
-        for cfg in sorted({r["cfg"] for r in rs}):
-            g = [r for r in graded if r["cfg"] == cfg]
-            by_cfg[cfg] = {"runs": len([r for r in rs if r["cfg"] == cfg]), "graded": len(g),
-                           "pass_rate": _stats([sum(v["passed"] for v in r["verdicts"]) / len(r["verdicts"]) for r in g]),
-                           "seconds": _stats([r["seconds"] for r in g]), "tokens": _stats([r["tokens"] for r in g])}
-        delta = {}
-        for cfg, d in by_cfg.items():
-            base, _, pressure = cfg.partition("+")
-            other = by_cfg.get("without" + (f"+{pressure}" if pressure else ""))
-            if base == "with" and other and d["pass_rate"]["mean"] is not None and other["pass_rate"]["mean"] is not None:
-                delta[cfg] = {k: round(d[k]["mean"] - other[k]["mean"], 3) for k in ("pass_rate", "seconds", "tokens")}
-        weak = []
-        for ev in sorted({r["eval"] for r in graded}):
-            er = [r for r in graded if r["eval"] == ev]
-            for i, text in enumerate(er[0]["expectations"]):
-                always = {r["cfg"].partition("+")[0] for r in er} == set(CONFIGS) and all(r["verdicts"][i]["passed"] for r in er)
-                flagged = sum(r["verdicts"][i]["weak"] for r in er)
-                if always or flagged:
-                    weak.append({"eval": ev, "n": i + 1, "assertion": text[:160], "passes_everywhere": always, "grader_flagged": flagged})
-        out[skill] = {"configs": by_cfg, "delta": delta, "weak_assertions": weak, "ungraded": len(rs) - len(graded)}
+        by_cfg = _by_cfg(rs, graded)
+        out[skill] = {"configs": by_cfg, "delta": _delta(by_cfg), "weak_assertions": _weak(graded), "ungraded": len(rs) - len(graded)}
     return out
+
+
+def _by_cfg(rs: list[dict], graded: list[dict]) -> dict:
+    """Per configuration: run and graded counts, and mean/stddev of pass rate, seconds and tokens over the graded runs."""
+    by_cfg = {}
+    for cfg in sorted({r["cfg"] for r in rs}):
+        g = [r for r in graded if r["cfg"] == cfg]
+        by_cfg[cfg] = {"runs": len([r for r in rs if r["cfg"] == cfg]), "graded": len(g),
+                       "pass_rate": _stats([sum(v["passed"] for v in r["verdicts"]) / len(r["verdicts"]) for r in g]),
+                       "seconds": _stats([r["seconds"] for r in g]), "tokens": _stats([r["tokens"] for r in g])}
+    return by_cfg
+
+
+def _delta(by_cfg: dict) -> dict:
+    """Each `with` configuration minus its `without` twin (same pressure variant), where both have a pass rate."""
+    delta = {}
+    for cfg, d in by_cfg.items():
+        base, _, pressure = cfg.partition("+")
+        other = by_cfg.get("without" + (f"+{pressure}" if pressure else ""))
+        if base == "with" and other and d["pass_rate"]["mean"] is not None and other["pass_rate"]["mean"] is not None:
+            delta[cfg] = {k: round(d[k]["mean"] - other[k]["mean"], 3) for k in ("pass_rate", "seconds", "tokens")}
+    return delta
+
+
+def _weak(graded: list[dict]) -> list[dict]:
+    """The assertions that never discriminated: passed in every run of both configurations, or flagged by the grader."""
+    weak = []
+    for ev in sorted({r["eval"] for r in graded}):
+        weak += _weak_in_eval(ev, [r for r in graded if r["eval"] == ev])
+    return weak
+
+
+def _weak_in_eval(ev: str, er: list[dict]) -> list[dict]:
+    weak = []
+    both = {r["cfg"].partition("+")[0] for r in er} == set(CONFIGS)
+    for i, text in enumerate(er[0]["expectations"]):
+        always = both and all(r["verdicts"][i]["passed"] for r in er)
+        flagged = sum(r["verdicts"][i]["weak"] for r in er)
+        if always or flagged:
+            weak.append({"eval": ev, "n": i + 1, "assertion": text[:160], "passes_everywhere": always, "grader_flagged": flagged})
+    return weak
 
 
 def render_md(report: dict) -> str:

@@ -284,7 +284,7 @@ python scripts/console_dev.py  # the console against a scratch home, on port 781
 ```
 
 `python zswarm.py <command>` also runs straight from a clone once `httpx`, `jsonschema`, `mcp` and `tomlkit` are
-installed. A release is a tag: push `v<version>` and [the release workflow](.github/workflows/release.yml) tests,
+installed. A release is a tag: push `v<version>` and [the release workflow](public/.github/workflows/release.yml) tests,
 builds, installs the wheel on Windows, macOS and Linux, and publishes it. Layout and conventions for
 contributors, human or agent, are in [AGENTS.md](AGENTS.md).
 
@@ -304,6 +304,9 @@ contributors, human or agent, are in [AGENTS.md](AGENTS.md).
   also gives it a shell, and shell commands are not limited to that folder. The optional `cc` backend (Claude Code
   as the worker) needs `confirm_write` for either and is not held to the folder, so treat it like `all`. Give each
   task the narrowest set that does the job.
+- ZergSwarm sends LunarWerx anonymous usage statistics: which command started, how many tasks a finished job had
+  and how many came back ok, the version, OS and Python version, and a random install id. That is how we see what
+  people use and where to spend our time. `ZSWARM_NO_PING=1` switches it off.
 
 ## ❓ FAQ
 
@@ -334,8 +337,9 @@ so use `all` only for tasks that must run commands. The optional `cc` backend ne
 is not held to the folder, so treat it like `all`.
 
 **Where does my data go?**
-To the provider serving each task. The console and the ledger stay on your machine. A free tier
-may keep what it is sent, so for private code use a paid key or set `ZSWARM_REDACT_FREE_TIER=on`.
+Your tasks go to the provider serving each one. The console and the ledger stay on your machine, and LunarWerx gets
+the anonymous usage statistics described under Security and privacy. A free tier may keep what it is sent, so for
+private code use a paid key or set `ZSWARM_REDACT_FREE_TIER=on`.
 
 ## 📄 License
 

@@ -509,3 +509,20 @@ def test_the_terminal_does_not_keep_a_key_the_provider_refuses(monkeypatch, caps
     monkeypatch.setattr(sys, "stdin", __import__("io").StringIO("gsk_not_a_real_key_0001\n"))
     assert cli.main(["keys", "add", "groq"]) == 1
     assert config.user_keys("groq") == [] and "not kept" in capsys.readouterr().err
+
+
+# Contract: several keys piped in at once (one per line, or split by commas) are each added and checked, and only the
+# refused one is dropped. Regression: `keys add` read one line, so every key after the first was silently ignored.
+def test_the_terminal_adds_every_key_piped_in_and_drops_only_the_refused_one(monkeypatch, capsys):
+    from zswarm import cli, keys
+
+    bad = "gsk_not_a_real_key_0002"
+
+    async def check(provider, fingerprint):
+        refused = fingerprint == config.fingerprint(bad)
+        return {"fingerprint": fingerprint, "result": "rejected" if refused else "ok", "note": "checked"}
+
+    monkeypatch.setattr(keys, "check", check)
+    monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(f"gsk_not_a_real_key_0001\n{bad}, gsk_not_a_real_key_0003\n"))
+    assert cli.main(["keys", "add", "groq"]) == 1
+    assert config.user_keys("groq") == ["gsk_not_a_real_key_0001", "gsk_not_a_real_key_0003"]

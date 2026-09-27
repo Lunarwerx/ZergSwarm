@@ -1,0 +1,80 @@
+# NVIDIA's hosted API catalog (build.nvidia.com): OpenAI-compatible, free with an NVIDIA account, no card.
+# The NVIDIA API Trial Terms of Service (v. 2025-09-19) say: internal testing and evaluation only, not production
+# (1.2, 1.4); NVIDIA may use what is sent and returned "to improve NVIDIA products and services, including AI models"
+# (3.3); no confidential or personal data (2.6). Limits are not published and no rate-limit header comes back; the
+# ceiling people report is 40 requests a minute per model per account.
+#
+# Measured 2026-09-27 with the owner's keys: a key reaches EVERY model (nothing is switched on per model; a dead key is
+# refused 403 on all of them), every model below answers the OpenAI tool-call format, and reasoning_effort "max" (the
+# effort the published scores were run at) is accepted. Speed swings with demand: GLM 5.3 and Kimi K3 answered in
+# 1-4 s, GLM 5.3 Flash in 1 s to 100 s, and DeepSeek V4.1 Flash, eight days after launch, timed out at 120-300 s on
+# most calls, so it stays on tool-free work until it has been seen calling a tool. ctx is a conservative 128k.
+#
+# `free_calls`: a call costs nothing, so AUTO serves these routes before any paid route at the same floor, cheapest
+# capable model first (selection.py). Prices are the models' list prices, which keep that order and the savings
+# ledger comparable. `live_per_key = 1` spreads calls one per key across every account. Only models with published
+# scores are here (AUTO ranks on them): Nemotron 3.5 Lightning and 3 Super meet no floor Nemotron 3 Ultra does not.
+
+base_url = "https://integrate.api.nvidia.com/v1"
+about = "NVIDIA's hosted catalog of open models (GLM, DeepSeek, Kimi, Nemotron). Free for testing, about 40 requests a minute."
+key_url = "https://build.nvidia.com/settings/api-keys"  # where a person makes an API key
+website = "https://build.nvidia.com"  # the company's site; the console shows its favicon
+free_tier = true  # the trial terms let NVIDIA keep and train on what is sent: ZSWARM_REDACT_FREE_TIER redacts tasks here
+free_calls = true
+live_per_key = 1
+options = ["reasoning_effort"]
+models_path = "/models"
+# The model list answers ANY key (HTTP 200 for a made-up one), so a key is checked with a one-token chat, which answers
+# a bad key 403; Nemotron 3 Ultra is NVIDIA's own and answered fastest.
+check_model = "nvidia/nemotron-3-ultra-550b-a55b"
+docs = "https://docs.api.nvidia.com/nim/reference/llm-apis"
+
+[models."rank:glm-5-3-flash:nvidia"]
+api_id = "z-ai/glm-5.3-flash"
+benchmark_slug = "glm-5-3-flash"
+ctx = 131072
+tools = true
+price = {hit = 0.0285, miss = 0.045, out = 0.6}
+default_reasoning_effort = "max"
+default_thinking = true
+cc_effort = false
+
+[models."rank:deepseek-v4-1-flash:nvidia"]
+api_id = "deepseek-ai/deepseek-v4.1-flash"
+benchmark_slug = "deepseek-v4-1-flash"
+ctx = 131072
+tools = false
+price = {hit = 0.006, miss = 0.3, out = 1.2}
+default_reasoning_effort = "max"
+default_thinking = true
+cc_effort = false
+
+[models."rank:nemotron-3-ultra:nvidia"]
+api_id = "nvidia/nemotron-3-ultra-550b-a55b"
+benchmark_slug = "nvidia-nemotron-3-ultra-550b-a55b"
+ctx = 131072
+tools = true
+price = {hit = 0.6, miss = 0.6, out = 2.5}
+default_reasoning_effort = "max"
+default_thinking = true
+cc_effort = false
+
+[models."rank:kimi-k3:nvidia"]
+api_id = "moonshotai/kimi-k3"
+benchmark_slug = "kimi-k3"
+ctx = 131072
+tools = true
+price = {hit = 3.0, miss = 3.0, out = 15.0}
+default_reasoning_effort = "max"
+default_thinking = true
+cc_effort = false
+
+[models."rank:glm-5-3:nvidia"]
+api_id = "z-ai/glm-5.3"
+benchmark_slug = "glm-5-3"
+ctx = 131072
+tools = true
+price = {hit = 0.26, miss = 1.4, out = 4.4}
+default_reasoning_effort = "max"
+default_thinking = true
+cc_effort = false

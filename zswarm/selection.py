@@ -168,8 +168,11 @@ def plan(profile="general", *, tools="none", backend="api", usable=None, reasoni
         candidates.append({"model": name, "reasoning_effort": effort, "thinking": entry.get("default_thinking"),
                            "benchmark_slug": p["slug"], "score": p["score"], "benchmark_cost_usd": p["cost"]*factor,
                            "source": p["source"], "scores": {k: p["scores"][k] for k in floors},
-                           "rates": config.price(name), "provider": entry["provider"], "configuration": p["name"]})
-    candidates.sort(key=lambda c: (priority_rank(c["model"]), c["benchmark_cost_usd"], -c["score"], c["model"]))
+                           "rates": config.price(name), "provider": entry["provider"], "configuration": p["name"],
+                           "free": bool(config.PROVIDERS[entry["provider"]].get("free_calls"))})
+    # A provider whose calls cost nothing (`free_calls`, NVIDIA's trial keys) serves first; among free routes, and among
+    # paid ones, the cheapest capable model still goes first, so a free route never means a bigger model than needed.
+    candidates.sort(key=lambda c: (priority_rank(c["model"]), not c["free"], c["benchmark_cost_usd"], -c["score"], c["model"]))
     candidates += _last_resort(candidates, excluded=excluded, usable=usable, min_context=min_context, profile=profile,
                                tools=tools, backend=backend, vision=vision, strict=reasoning_effort is not None or bool(min_scores))
     return {"profile": profile, "evidence_date": data["as_of_utc"], "candidates": candidates,
@@ -205,7 +208,35 @@ def note_result(provider, error, now=None):
 
 
 def reset_load():
-    _INFLIGHT.clear(), _SLOW.clear()
+    _INFLIGHT.clear(), _SLOW.clear(), _CRAWL.clear()
+
+
+# Per MODEL, not per provider: NVIDIA queues each model on its own, and on 2026-09-27 GLM 5.3 Flash took 46-104 s for a
+# one-line answer while GLM 5.3 beside it took 1-4 s. A model whose last call ran slower than config.SLOW_LEG_TURN_S a
+# turn (or timed out) is tried after the capable models that are not crawling, until the mark ages out
+# (config.SLOW_MARK_S); then one call finds out whether it has recovered.
+_CRAWL: dict[str, float] = {}
+
+
+def note_speed(model, res, now=None):
+    from . import config
+
+    if not model:
+        return
+    now = time.monotonic() if now is None else now
+    err = res.error or ""
+    per_turn = (res.api_seconds or res.seconds or 0.0) / max(1, res.turns or 1)
+    if "timeout" in err.lower() or "SlowLeg:" in err or (res.status == "ok" and per_turn > config.SLOW_LEG_TURN_S):
+        _CRAWL[model] = now
+    elif res.status == "ok":
+        _CRAWL.pop(model, None)
+
+
+def crawling(model, now=None):
+    from . import config
+
+    t = _CRAWL.get(model)
+    return t is not None and (time.monotonic() if now is None else now) - t < config.SLOW_MARK_S
 
 
 def pressure(provider, capacity, now=None):
@@ -225,6 +256,9 @@ def rebias(candidates, pressure_of):
 
     out = [{**c, "load_bias": round(config.LOAD_BIAS * pressure_of(c["provider"]), 4) if c.get("provider") else 0.0}
            for c in candidates]
-    out.sort(key=lambda c: (bool(c.get("unevidenced")), priority_rank(c["model"]),
+    for c in out:
+        if crawling(c["model"]):
+            c["crawling"] = True
+    out.sort(key=lambda c: (bool(c.get("unevidenced")), priority_rank(c["model"]), not c.get("free"), bool(c.get("crawling")),
                             (c.get("benchmark_cost_usd") or 0.0) * (1 + c["load_bias"]), -(c.get("score") or 0)))
     return out

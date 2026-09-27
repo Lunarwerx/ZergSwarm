@@ -177,43 +177,57 @@ def board(suite: str | None = None, include_legacy: bool = True, all_versions: b
         s, v = r.get("suite"), r.get("v")
         if s not in newest_v or r["ts"] > newest_v[s][1]:
             newest_v[s] = (v, r["ts"])
-        g = groups.setdefault((s, v, r.get("arm")), {"suite": s, "v": v, "arm": r.get("arm"), "graded": 0, "passed": 0, "ungraded": 0,
-                                                     "cost_usd": 0.0, "secs": [], "tools": [], "skipped": 0, "first": r["ts"], "last": r["ts"], "machines": set(), "runs": set(), "model": r.get("resolved") or r.get("model")})
-        if r.get("status") in UNGRADED or r.get("pass") is None:
-            g["ungraded"] += 1
-        else:
-            g["graded"] += 1
-            g["passed"] += bool(r["pass"])
-            if r.get("s") is not None:
-                g["secs"].append(float(r["s"]))
-        if r.get("tools_ok") is not None:  # the trace score (zswarm/trace.py): did the arm reach its answer the right way
-            g["tools"].append(bool(r["tools_ok"]))
-        # Known-gap tasks the arm was not run on (bench/tasks.py KnownGap): its rate covers fewer items than its peers'.
-        g["skipped"] = max(g["skipped"], int(r.get("skipped") or 0))
-        g["cost_usd"] += float(r.get("cost") or 0)
-        g["first"], g["last"] = min(g["first"], r["ts"]), max(g["last"], r["ts"])
-        g["machines"].add(r.get("machine"))
-        g["runs"].add(r.get("run"))
-    out = []
-    for (s, v, _a), g in groups.items():
-        if not all_versions and newest_v.get(s, (None,))[0] != v:
-            continue
-        n = g["graded"]
-        out.append({"suite": s, "v": v, "arm": g["arm"], "model": g["model"], "graded": n, "passed": g["passed"], "rate": round(g["passed"] / n, 4) if n else None,
-                    "ungraded": g["ungraded"], "tools_rate": round(sum(g["tools"]) / len(g["tools"]), 4) if g["tools"] else None,
-                    "skipped": g["skipped"],
-                    "cost_usd": round(g["cost_usd"], 6), "cost_per_item": round(g["cost_usd"] / max(1, n + g["ungraded"]), 7),
-                    "p50_s": _pct(g["secs"], 0.5), "p95_s": _pct(g["secs"], 0.95), "first": g["first"][:10], "last": g["last"][:10],
-                    "machines": sorted(m for m in g["machines"] if m), "runs": len(g["runs"]), "source": "rows"})
+        _add_to_group(groups.setdefault((s, v, r.get("arm")), _new_group(s, v, r)), r)
+    out = [_group_line(s, v, g) for (s, v, _a), g in groups.items() if all_versions or newest_v.get(s, (None,))[0] == v]
     if include_legacy:
-        for r in _read(LEGACY):
-            if suite and r.get("suite") != suite:
-                continue
-            out.append({"suite": r["suite"], "v": r.get("v", "doc"), "arm": r["arm"], "model": r.get("model"), "graded": r["total"], "passed": r["pass"],
-                        "rate": round(r["pass"] / r["total"], 4) if r.get("total") else None, "ungraded": r.get("ungraded", 0), "cost_usd": r.get("cost_usd"),
-                        "cost_per_item": None, "p50_s": r.get("p50_s"), "p95_s": None, "first": r["date"], "last": r["date"], "machines": [r.get("machine") or "?"],
-                        "runs": 1, "source": r.get("source", "doc"), "note": r.get("note", "")})
+        out += _legacy_lines(suite)
     out.sort(key=lambda x: (x["suite"] or "", x["source"] != "rows", -(x["rate"] or 0), x["arm"] or ""))
+    return out
+
+
+def _new_group(s: str | None, v: str | None, r: dict) -> dict:
+    return {"suite": s, "v": v, "arm": r.get("arm"), "graded": 0, "passed": 0, "ungraded": 0,
+            "cost_usd": 0.0, "secs": [], "tools": [], "skipped": 0, "first": r["ts"], "last": r["ts"], "machines": set(), "runs": set(), "model": r.get("resolved") or r.get("model")}
+
+
+def _add_to_group(g: dict, r: dict) -> None:
+    """Fold one result row into its (suite, version, arm) group."""
+    if r.get("status") in UNGRADED or r.get("pass") is None:
+        g["ungraded"] += 1
+    else:
+        g["graded"] += 1
+        g["passed"] += bool(r["pass"])
+        if r.get("s") is not None:
+            g["secs"].append(float(r["s"]))
+    if r.get("tools_ok") is not None:  # the trace score (zswarm/trace.py): did the arm reach its answer the right way
+        g["tools"].append(bool(r["tools_ok"]))
+    # Known-gap tasks the arm was not run on (bench/tasks.py KnownGap): its rate covers fewer items than its peers'.
+    g["skipped"] = max(g["skipped"], int(r.get("skipped") or 0))
+    g["cost_usd"] += float(r.get("cost") or 0)
+    g["first"], g["last"] = min(g["first"], r["ts"]), max(g["last"], r["ts"])
+    g["machines"].add(r.get("machine"))
+    g["runs"].add(r.get("run"))
+
+
+def _group_line(s: str | None, v: str | None, g: dict) -> dict:
+    n = g["graded"]
+    return {"suite": s, "v": v, "arm": g["arm"], "model": g["model"], "graded": n, "passed": g["passed"], "rate": round(g["passed"] / n, 4) if n else None,
+            "ungraded": g["ungraded"], "tools_rate": round(sum(g["tools"]) / len(g["tools"]), 4) if g["tools"] else None,
+            "skipped": g["skipped"],
+            "cost_usd": round(g["cost_usd"], 6), "cost_per_item": round(g["cost_usd"] / max(1, n + g["ungraded"]), 7),
+            "p50_s": _pct(g["secs"], 0.5), "p95_s": _pct(g["secs"], 0.95), "first": g["first"][:10], "last": g["last"][:10],
+            "machines": sorted(m for m in g["machines"] if m), "runs": len(g["runs"]), "source": "rows"}
+
+
+def _legacy_lines(suite: str | None) -> list[dict]:
+    out = []
+    for r in _read(LEGACY):
+        if suite and r.get("suite") != suite:
+            continue
+        out.append({"suite": r["suite"], "v": r.get("v", "doc"), "arm": r["arm"], "model": r.get("model"), "graded": r["total"], "passed": r["pass"],
+                    "rate": round(r["pass"] / r["total"], 4) if r.get("total") else None, "ungraded": r.get("ungraded", 0), "cost_usd": r.get("cost_usd"),
+                    "cost_per_item": None, "p50_s": r.get("p50_s"), "p95_s": None, "first": r["date"], "last": r["date"], "machines": [r.get("machine") or "?"],
+                    "runs": 1, "source": r.get("source", "doc"), "note": r.get("note", "")})
     return out
 
 

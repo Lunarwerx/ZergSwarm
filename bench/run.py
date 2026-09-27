@@ -265,11 +265,17 @@ def write_report(report: dict, out_path: str | None = None) -> Path:
     return OUT / f"{report['run']}.md"
 
 
-async def _run_arms(a, report: dict, suite: str, repeats: int) -> None:
+def _run_arm_list(a) -> list:
+    """The arms --backend names, with --baseline checked against them."""
     arms = instruction_arms(_parse_backends(a.backend, a.model), getattr(a, "instructions", None)) if a.backend else []
     baseline = getattr(a, "baseline", None)
     if baseline and arms and baseline not in {arm_name(x) for x in arms}:
         raise SystemExit(f"bench: --baseline {baseline!r} is not one of this run's arms: {', '.join(arm_name(x) for x in arms)}")
+    return arms
+
+
+def _run_tasks(a, suite: str) -> tuple:
+    """(build_fn, the suite's tasks --only selects)."""
     # `--only a,b` and `--only a --only b` both work. A filter that matched nothing used to run zero tasks
     # and write an empty report without a word - a benchmark that measured nothing and looked finished.
     only = {x.strip() for part in (a.only or []) for x in part.split(",") if x.strip()}
@@ -279,6 +285,29 @@ async def _run_arms(a, report: dict, suite: str, repeats: int) -> None:
         raise SystemExit(f"bench: --only matched no {suite} task; known: {', '.join(t.id for t in task_list)}")
     if only - {t.id for t in tasks}:
         raise SystemExit(f"bench: unknown task id(s) {sorted(only - {t.id for t in tasks})}; known: {', '.join(t.id for t in task_list)}")
+    return build_fn, tasks
+
+
+async def _run_one_arm(m, a, arm, tasks, truth, fixture_root, report: dict, repeats: int, conc: int) -> None:
+    # The gaps come back from the run itself, so the report can never list a different skip set than was run.
+    name, record, gaps = await _run_arm(m, a, arm, tasks, truth, fixture_root, OUT / report["run"], repeats, conc)
+    if gaps:
+        report["known_gaps"][name] = gaps
+    if record is not None:
+        report["arms"][name] = record
+    write_report(report, getattr(a, "out", None))
+
+
+def _restore_arm_order(report: dict, arms: list) -> None:
+    # gather fills report["arms"] in COMPLETION order (a results-DB reuse lands first). The compare step's
+    # default baseline is the first arm named in --backend, so restore the parsed order.
+    order = [arm_name(x) for x in arms]
+    report["arms"] = {n: report["arms"][n] for n in sorted(report["arms"], key=lambda n: order.index(n) if n in order else len(order))}
+
+
+async def _run_arms(a, report: dict, suite: str, repeats: int) -> None:
+    arms = _run_arm_list(a)
+    build_fn, tasks = _run_tasks(a, suite)
     if not arms or not tasks:
         return
     # Before a cent is spent: a grader that passes a lazy answer or fails a right one would score every
@@ -290,30 +319,17 @@ async def _run_arms(a, report: dict, suite: str, repeats: int) -> None:
     # Nothing should queue behind the semaphore: every task of every arm and repeat can be in flight,
     # so the run measures the providers rather than our own backlog.
     conc = a.concurrency or min(len(arms) * repeats * len(tasks), config.MAX_CONCURRENCY["api"])
-
-    async def one(arm) -> None:
-        # The gaps come back from the run itself, so the report can never list a different skip set than was run.
-        name, record, gaps = await _run_arm(m, a, arm, tasks, truth, fixture_root, OUT / report["run"], repeats, conc)
-        if gaps:
-            report["known_gaps"][name] = gaps
-        if record is not None:
-            report["arms"][name] = record
-        write_report(report, getattr(a, "out", None))
-
     try:
         # Arms run together by default: different providers do not contend, and running them in the same
         # minutes is FAIRER than back-to-back, which straddles peak/off-peak boundaries and load drift.
         if getattr(a, "sequential", False):
             for arm in arms:
-                await one(arm)
+                await _run_one_arm(m, a, arm, tasks, truth, fixture_root, report, repeats, conc)
         else:
-            await asyncio.gather(*(one(arm) for arm in arms))
+            await asyncio.gather(*(_run_one_arm(m, a, arm, tasks, truth, fixture_root, report, repeats, conc) for arm in arms))
     finally:
         await m.aclose()
-        # gather fills report["arms"] in COMPLETION order (a results-DB reuse lands first). The compare step's
-        # default baseline is the first arm named in --backend, so restore the parsed order.
-        order = [arm_name(x) for x in arms]
-        report["arms"] = {n: report["arms"][n] for n in sorted(report["arms"], key=lambda n: order.index(n) if n in order else len(order))}
+        _restore_arm_order(report, arms)
 
 
 def run_selftest(a, suite: str) -> int:

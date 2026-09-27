@@ -12,6 +12,9 @@ Rules the benchmark set, which the code enforces:
 - Jev never sees a batch of more than 5 unrelated items in one call. At 5 its accuracy held (85.5% vs 85.2%
   one per call); at 20 it fell to 74.7% (a 77-way intent question fell from 78% to 38%), the "large state full
   of irrelevant detail" failure TypeSafe documents for jev-1.13.
+- Items that carry the SAME state are one call whatever `batch` says: Jev reads the state once and answers every
+  question against it in parallel, which is how its API is meant to be used ("speculative fan-out"), with no
+  unrelated state to dilute it. Dredd asks ~16 questions of one ask; that was ~16 calls, each re-billing the ask.
 - Arithmetic, counting, dates and generation are not decisions: route those to zswarm_ask, not here
   (Jev scored 76% on the trap-arithmetic suite where gpt-oss-120b scored 94%).
 """
@@ -30,6 +33,7 @@ SYSTEM = ("You answer one typed decision question about the STATE you are given.
           "carefully and think it through. Then end your reply with a line in exactly this format: 'FINAL: <key>' "
           "where <key> is exactly one of the option keys listed, and nothing else is on that line.")
 MAX_BATCH = 5
+MAX_SHARED = 64  # questions put to one shared state in one call; past it the group splits
 BATCH_STATE_CHARS, BATCH_TOTAL_CHARS = 60_000, 150_000  # Jev's 32k/64k-token limits at a conservative ~3 chars/token
 TYPES = {"choice": "choice", "noul": "noul", "yesno": "noul", "yes_no": "noul", "bool": "noul", "score": "score", "scale": "score"}
 
@@ -64,7 +68,10 @@ def normalize(raw: dict, i: int = 0) -> dict:
             opts = {k: v for k, v in opts.items() if v} or None
         else:
             opts = None
-    return {"id": str(raw.get("id") or f"d{i}"), "type": t, "state": raw["state"], "instructions": str(q), "criteria": opts}
+    # Jev takes structured instructions (the question in one field, the data it names in others); str() of a dict
+    # would send Python's repr instead.
+    ins = q if isinstance(q, (dict, list)) else str(q)
+    return {"id": str(raw.get("id") or f"d{i}"), "type": t, "state": raw["state"], "instructions": ins, "criteria": opts}
 
 
 def options(item: dict) -> list[tuple[str, object]]:
@@ -82,7 +89,9 @@ def options(item: dict) -> list[tuple[str, object]]:
 def render(item: dict) -> str:
     st = item["state"]
     state = st if isinstance(st, str) else json.dumps(st, indent=1, ensure_ascii=False)
-    lines = [f"STATE:\n{state}\n", f"QUESTION: {item['instructions']}\n", "OPTIONS (answer with the key before the colon):"]
+    ins = item["instructions"]
+    ins = ins if isinstance(ins, str) else json.dumps(ins, indent=1, ensure_ascii=False)
+    lines = [f"STATE:\n{state}\n", f"QUESTION: {ins}\n", "OPTIONS (answer with the key before the colon):"]
     for k, d in options(item):
         if d is None or d == "":
             lines.append(f"- {k}")
@@ -123,7 +132,9 @@ def batched_question(item: dict, i: int) -> dict:
     """The item's question, pointed at its own slot `items[i]` of a shared state."""
     q = jev_question(item)
     ins = item["instructions"]
-    if isinstance(item["state"], dict):
+    if not isinstance(ins, str):
+        q["instructions"] = {"about": f"`items[{i}]`", "question": ins}
+    elif isinstance(item["state"], dict):
         for k in item["state"]:
             ins = ins.replace(f"`{k}`", f"`items[{i}].{k}`")
         q["instructions"] = ins if f"items[{i}]" in ins else f"About `items[{i}]`: {ins}"
@@ -146,6 +157,26 @@ def pack(items: list[dict], n: int) -> list[list[dict]]:
     return groups + ([cur] if cur else [])
 
 
+def share(items: list[dict]) -> list[list[int]]:
+    """Item indexes grouped by identical state, in first-seen order, each group cut to fit one call (MAX_SHARED
+    questions, Jev's context). A state no other item carries comes back as a group of one."""
+    by: dict[str, list[int]] = {}
+    for k, it in enumerate(items):
+        by.setdefault(json.dumps(it["state"], ensure_ascii=False, sort_keys=True), []).append(k)
+    groups = []
+    for key, ks in by.items():
+        cur, tot = [], len(key)
+        for k in ks:
+            q = len(json.dumps(jev_question(items[k]), ensure_ascii=False))
+            if cur and (len(cur) >= MAX_SHARED or tot + q > BATCH_TOTAL_CHARS):
+                groups.append(cur)
+                cur, tot = [], len(key)
+            cur.append(k)
+            tot += q
+        groups.append(cur)
+    return groups
+
+
 def read_answer(item: dict, a: dict) -> dict:
     """One typed Jev answer -> the predicted option key, its probabilities and confidence."""
     if item["type"] == "noul":
@@ -159,34 +190,47 @@ def read_answer(item: dict, a: dict) -> dict:
 
 
 async def jev_answers(jev: typesafe.Jev, items: list[dict], model: str = typesafe.MODEL, batch: int = 1) -> tuple[list[dict], dict]:
-    """Every item through Jev (one call each, or packs of <= MAX_BATCH). Returns per-item results and call stats."""
+    """Every item through Jev: items sharing a state in one call (share), the rest one call each or packs of
+    <= MAX_BATCH. Returns per-item results in the items' order, and call stats."""
     batch = max(1, min(int(batch or 1), MAX_BATCH))
-    groups = pack(items, batch) if batch > 1 else [[it] for it in items]
+    shared = share(items)
+    solo = [g[0] for g in shared if len(g) == 1]
+    calls = [(True, g) for g in shared if len(g) > 1]
+    if batch > 1:
+        rest = iter(solo)  # pack() keeps order and cuts consecutive runs, so its groups consume solo in turn
+        calls += [(False, [next(rest) for _ in p]) for p in pack([items[s] for s in solo], batch)]
+    else:
+        calls += [(False, [s]) for s in solo]
     stats = {"calls": 0, "in": 0, "out": 0, "cost_usd": 0.0, "secs": 0.0, "model": model, "errors": 0}
+    results: list[dict] = [{}] * len(items)
 
-    async def one(group: list[dict]) -> list[dict]:
-        if len(group) == 1:
-            state, qs = group[0]["state"], {"q0": jev_question(group[0])}
+    async def one(same_state: bool, group: list[int]) -> None:
+        its = [items[k] for k in group]
+        if same_state or len(its) == 1:
+            state, qs = its[0]["state"], {f"q{i}": jev_question(it) for i, it in enumerate(its)}
         else:
-            state, qs = {"items": [it["state"] for it in group]}, {f"q{i}": batched_question(it, i) for i, it in enumerate(group)}
+            state, qs = {"items": [it["state"] for it in its]}, {f"q{i}": batched_question(it, i) for i, it in enumerate(its)}
         res = await jev.ask(state, qs, model=model)
         stats["calls"] += 1
         if res["status"] != "ok":
             stats["errors"] += 1
-            return [{"status": "error", "error": res["error"]} for _ in group]
+            for k in group:
+                results[k] = {"status": "error", "error": res["error"]}
+            return
         stats["in"] += res["in"]
         stats["out"] += res["out"]
         stats["cost_usd"] += res["cost_usd"]
         stats["secs"] += res["secs"]
         stats["model"] = res["model"]
-        out = []
-        for i, it in enumerate(group):
+        for i, (k, it) in enumerate(zip(group, its)):
             a = res["answers"].get(f"q{i}")
-            out.append({"status": "ok", **read_answer(it, a)} if a else {"status": "error", "error": f"no answer for q{i}"})
-        return out
+            try:
+                results[k] = {"status": "ok", **read_answer(it, a)} if a else {"status": "error", "error": f"no answer for q{i}"}
+            except (KeyError, TypeError, ValueError):  # one malformed answer escalates its item, never sinks the call
+                results[k] = {"status": "error", "error": f"malformed answer for q{i}: {json.dumps(a)[:120]}"}
 
-    per_group = await asyncio.gather(*(one(g) for g in groups))
-    return [r for g in per_group for r in g], stats
+    await asyncio.gather(*(one(s, g) for s, g in calls))
+    return results, stats
 
 
 # ---------------------------------------------------------------- the cascade

@@ -21,11 +21,16 @@ def test_profile_defaults_follow_tools_and_roles():
         selection.profile_for("nonsense")
 
 
-def test_candidates_are_sorted_by_cost_and_meet_every_floor():
+def test_candidates_are_free_first_then_cheapest_and_meet_every_floor():
+    # Owner, 2026-09-27: prefer NVIDIA because its calls are free, but still the cheapest model that is capable.
     cands = _p("general")
     assert cands, "general must have at least one route"
-    costs = [c["benchmark_cost_usd"] for c in cands if not c.get("unevidenced")]
-    assert costs == sorted(costs)
+    evaluated = [c for c in cands if not c.get("unevidenced")]
+    assert [c["free"] for c in evaluated] == sorted((c["free"] for c in evaluated), reverse=True)  # every free route first
+    assert any(c["free"] for c in evaluated) and not all(c["free"] for c in evaluated)
+    for free in (True, False):
+        costs = [c["benchmark_cost_usd"] for c in evaluated if c["free"] is free]
+        assert costs == sorted(costs)
     for c in cands:
         for k, v in selection.PROFILES["general"].items():
             assert c["scores"][k] >= v
@@ -146,3 +151,24 @@ def test_a_backup_serves_when_every_tested_route_is_down(user_toml):
     assert [c["model"] for c in legs] == ["command-a"] and legs[0]["unevidenced"] and legs[0]["backup"]
     assert _p("critical", tools="read", usable=lambda p: p == "cohere") == []
     assert not any(c.get("backup") for c in _p("code", tools="read", usable=lambda p: p != "cohere"))
+
+
+def test_a_crawling_free_model_goes_behind_the_free_models_that_are_not():
+    # 2026-09-27: GLM 5.3 Flash on NVIDIA took 46-104 s a call while GLM 5.3 took 1-4 s. The cheapest free model must
+    # not hold every call while it crawls, must not fall behind a paid route either, and comes back once it is fast.
+    from types import SimpleNamespace
+
+    selection.reset_load()
+    try:
+        cands = _p("general")
+        free = [c["model"] for c in cands if c.get("free") and not c.get("unevidenced")]
+        paid = [c["model"] for c in cands if not c.get("free")]
+        first = free[0]
+        selection.note_speed(first, SimpleNamespace(status="ok", error=None, api_seconds=79.0, seconds=79.0, turns=1))
+        order = [c["model"] for c in selection.rebias(cands, lambda p: 0.0)]
+        assert [m for m in order if m in free][-1] == first
+        assert order.index(first) < min(order.index(m) for m in paid)
+        selection.note_speed(first, SimpleNamespace(status="ok", error=None, api_seconds=2.0, seconds=2.0, turns=1))
+        assert [c["model"] for c in selection.rebias(cands, lambda p: 0.0)][0] == first
+    finally:
+        selection.reset_load()

@@ -364,6 +364,7 @@ details.more>.more-in>section:first-child{margin-top:8px}
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-spend" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.3c-.5-.9-1.5-1.4-2.8-1.4-1.6 0-2.7.8-2.7 2 0 2.8 5.6 1.5 5.6 4.2 0 1.2-1.1 2-2.9 2-1.4 0-2.5-.6-3-1.6M12 6.2v1.7M12 16.1v1.7"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9M19.5 4.5V9H15"/></symbol>
+  <symbol id="i-discord" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></symbol>
 </svg>
 <a class="sr skip" href="#" data-act="skip">Skip to detail</a>
 <header>
@@ -372,6 +373,9 @@ details.more>.more-in>section:first-child{margin-top:8px}
   <span class="brand">ZergSwarm</span><span class="muted">console</span>
   <span id="ver" class="mono muted"></span>
   <span class="grow"></span>
+  <!-- The studio's Discord, as a plain icon: this is the page people keep open, so it carries the
+       invite quietly rather than the landing pages' floating badge (owner, 2026-09-27). -->
+  <a class="b i" href="https://discord.gg/PsWpeNUzhk" target="_blank" rel="noopener noreferrer" title="Join the LunarWerx Discord" aria-label="Join the LunarWerx Discord"><svg class="ic" aria-hidden="true"><use href="#i-discord"/></svg></a>
   <a class="b" href="#help" data-act="sel" data-id="help" title="What a key, a free tier and a token are, and what a task costs"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg>Help</a>
   <button class="b" data-act="refresh" title="Reload everything from the server"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>Reload</button>
 </header>
@@ -1367,7 +1371,7 @@ function dProvider(name) {
       (p.disabled_why && p.disabled_why.length ? prow("Why keys are off", p.disabled_why.map((w) => `<span class="nw">${esc(cnum(w.keys))} ${esc(w.reason)}</span>`).join('<span class="sep" aria-hidden="true"> · </span>'),
         "A key out of credit comes back when a balance probe sees a top-up; a key the provider refused (401/403) needs replacing.") : "") +
       (p.website ? prow("Website", xlink(esc(p.website.replace(/^https?:\/\//, "")), p.website)) : "")) +
-    sec("Keys", `<div class="row" style="margin:6px 0 8px"><input type="password" id="nk" data-keep autocomplete="off" class="grow in-l" placeholder="Paste a ${esc(name)} API key" data-enter="keyAdd"${da(o)} aria-label="New key">${btn(bi("add", "Add key"), "keyAdd", o, "p")}</div>${getKey}${keysTable(name)}`,
+    sec("Keys", `<div class="row" style="margin:6px 0 8px"><input type="password" id="nk" data-keep autocomplete="off" class="grow in-l" placeholder="Paste one or more ${esc(name)} API keys" data-enter="keyAdd"${da(o)} aria-label="New key">${btn(bi("add", "Add key"), "keyAdd", o, "p")}</div>${getKey}${keysTable(name)}`,
       p.keys ? btn(bi("spend", "Probe balance"), "probe", o, "", 'title="Check the balance (free)"') + btn(bi("refresh", "Reload"), "keysReload", o) : "") +
     sec("Use", useFig("pu-" + hnum(name).toString(36), Z.S.models.filter((m) => m.provider === name).map((m) => m.name), chw(1)) + perModelFig("pm-" + hnum(name).toString(36), name, chw(1))) +
     sec(`Models <span class="muted">(${nModels})</span>`, `<p class="hint" style="margin:0 0 6px">ZergSwarm picks among these by itself for each task, so there is nothing to choose here: leave them on. <b>AUTO</b> marks the ones with published test scores; the others step in when those are busy.</p>` +
@@ -1567,7 +1571,7 @@ function dHelp() {
     q("Which model should I pick?", "<p>None: leave them on. For each task ZergSwarm picks the cheapest model whose published test scores are good enough for that kind of work, and moves on to the next if it fails. The <b>AUTO</b> tag marks the models it ranks that way. A star (☆) puts a model first in that order; you never need one.</p>") +
     q("What are roles?", `<p>A role is a kind of work a task can name, such as <i>code</i> or <i>summarize</i>. Each is set to auto, and most people leave them that way. They are on ${link("Routing & roles", "routing")}.</p>`) +
     q("How do I connect it to my assistant?", `<p>On ${link("Clients", "clients")}, press Install next to Claude Code, Claude Desktop or Codex, then open a new chat there.</p>`) +
-    q("Where can I ask a question?", `<p>Open an issue on ${xlink("GitHub", ISSUES_URL)} (a free account). The ${xlink("full guide", HELP_URL)} covers everything here in more depth.</p>`) +
+    q("Where can I ask a question?", `<p>Ask in the ${xlink("LunarWerx Discord", "https://discord.gg/PsWpeNUzhk")}, or open an issue on ${xlink("GitHub", ISSUES_URL)} (a free account). The ${xlink("full guide", HELP_URL)} covers everything here in more depth.</p>`) +
     `</div>`);
 }
 
@@ -1722,18 +1726,24 @@ const ACT = {
   refresh: () => run(async () => { reloadKeys(); await Z.refresh(); await Promise.all([loadJobs(), loadClients(), loadUsage()]) }, "Reloaded"),
   usageReload: () => loadUsage(),
   probe: (d) => { note(d.p ? `Probing ${d.p}…` : "Probing every balance…"); return run(async () => { const r = await Z.probe(d.p || undefined); reloadKeys(d.p); return r }, (r) => (r && r.note) || "Probed") },
-  // The pasted key stays in the field until the add succeeds, so a failure never makes the user find it again.
-  keyAdd: (d) => { const key = $("nk").value.trim(); if (!key) return note("Paste a key first", true);
+  // Several keys may be pasted at once (one per line, or split by spaces or commas); each is added and checked alone.
+  // A key that was not kept stays in the field, so a failure never makes the user find it again.
+  keyAdd: (d) => { const keys = [...new Set($("nk").value.split(/[\s,;]+/).filter(Boolean))]; if (!keys.length) return note("Paste a key first", true);
     return once("keyAdd", () => run(async () => {
-      let r; try { r = await Z.addKey(d.p, key) } catch (e) { PENDF = () => $("nk"); throw e }
-      const n = $("nk"); if (n) n.value = ""; if (r && r.added) FLASH.add(r.fingerprint);
-      if (r && r.added) { try { r.check = await Z.checkKey(d.p, r.fingerprint) } catch (e) { r.check = { result: "unchecked", note: e.message } } }
+      const added = [], left = [], notes = [];
+      for (const key of keys) {
+        let r; try { r = await Z.addKey(d.p, key) } catch (e) { left.push(key); notes.push(e.message); continue }
+        if (r && r.added) { FLASH.add(r.fingerprint); try { r.check = await Z.checkKey(d.p, r.fingerprint) } catch (e) { r.check = { result: "unchecked", note: e.message } } }
+        // A key the provider refuses is taken back out at once: a saved dead key is one more thing to clean up (SUE, 2026-09-26).
+        if (r.check && r.check.result === "rejected") { try { await Z.removeKey(d.p, r.fingerprint) } catch (e) { notes.push(e.message) } left.push(key); notes.push(`${d.p} did not accept that key, so it was not kept`); continue }
+        if (r.added) added.push(`${r.fingerprint}${r.check ? ": " + r.check.note : ""}`); else notes.push(r.note || "Nothing added")
+      }
+      const n = $("nk"); if (n) n.value = left.join(" ");
       reloadKeys(d.p);
-      // A key the provider refuses is taken back out at once: a saved dead key is one more thing to clean up (SUE, 2026-09-26).
-      if (r.check && r.check.result === "rejected") { try { await Z.removeKey(d.p, r.fingerprint) } finally { reloadKeys(d.p) }
-        PENDF = () => $("nk"); throw new Error(`${d.p} did not accept that key, so it was not kept. Check it was copied whole, or make a new one on ${d.p}'s site.`) }
-      return r
-    }, (r) => r.added ? `Added key ${r.fingerprint}${r.check ? ": " + r.check.note : ""}` : r.note || "Nothing added")) },
+      if (left.length) { PENDF = () => $("nk")
+        throw new Error(`${added.length ? `Added ${added.length}. ` : ""}${left.length} of ${keys.length} not kept (left in the field): ${[...new Set(notes)].join("; ")}. Check each was copied whole, or make a new one on ${d.p}'s site.`) }
+      return { added, notes }
+    }, (r) => r.added.length ? `Added ${r.added.length === 1 ? "key " + r.added[0] : r.added.length + " keys: " + r.added.join(", ")}` : r.notes[0] || "Nothing added")) },
   keyCheck: (d) => once("check:" + d.fp, () => run(async () => { const r = await Z.checkKey(d.p, d.fp); reloadKeys(d.p); if (r.result === "rejected") throw new Error(r.note); return r }, (r) => r.note)),
   // Two clicks on the button itself, not a browser dialog: a removed key cannot be undone (the page never holds the key).
   keyRm: async (d, el) => { if (el.dataset.armed !== "1") { el.dataset.armed = "1"; el.textContent = "Click again to remove"; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ""; el.textContent = "Remove" } }, 10000); return }
@@ -1844,6 +1854,11 @@ document.addEventListener("click", (e) => {
     r.finally(() => el.removeAttribute("aria-busy")).catch((err) => note(err.message || String(err), true));
   }
 });
+// A password field drops line breaks, which would glue keys pasted one per line into one key the provider refuses.
+document.addEventListener("paste", (e) => { const el = e.target; if (!el || el.id !== "nk") return;
+  const text = (e.clipboardData && e.clipboardData.getData("text")) || ""; if (!/[\r\n]/.test(text.trim())) return;
+  e.preventDefault(); const keys = text.split(/[\s,;]+/).filter(Boolean).join(" ");
+  el.value = el.value.slice(0, el.selectionStart) + keys + el.value.slice(el.selectionEnd) });
 document.addEventListener("change", (e) => {
   const el = e.target.closest("[data-chg]"); if (!el || !CHG[el.dataset.chg]) return;
   if (el.id && el.closest(".sw")) FX.sw = { id: el.id, on: el.checked };

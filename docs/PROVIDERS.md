@@ -62,6 +62,7 @@ aliases = ["small"]
 | `anthropic_auth` | `"x-api-key"` or `"bearer"` | |
 | `live_per_key` | live calls per usable key before a job waits | 4 |
 | `free_tier` | the provider's free terms may keep what it is sent; `ZSWARM_REDACT_FREE_TIER` redacts a task that sets no `redact` when it runs here | `false` |
+| `free_calls` | a call here costs nothing (NVIDIA's trial keys): AUTO serves this provider's routes before any paid route that meets the same floor, still cheapest capable model first | `false` |
 | `about` | one plain sentence about the provider, shown in the console | |
 | `key_url` | the page where a person makes an API key (the console's "Get a key" link) | |
 | `website` | the company's site; the console shows its favicon (fetched by your server into `~/.zswarm/favicons/`) | |

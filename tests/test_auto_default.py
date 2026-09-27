@@ -83,8 +83,12 @@ def test_profile_chains_are_cost_ordered_and_keep_stronger_swarm_models(routing_
     for profile in ("general", "code", "decision"):
         candidates = plan(profile, usable=lambda p: True)["candidates"]
         assert candidates
-        costs = [c["benchmark_cost_usd"] for c in candidates if not c.get("unevidenced")]
-        assert costs == sorted(costs)
+        evaluated = [c for c in candidates if not c.get("unevidenced")]
+        # free routes (free_calls) first, then paid; each group cheapest first
+        assert [c["free"] for c in evaluated] == sorted((c["free"] for c in evaluated), reverse=True)
+        for free in (True, False):
+            costs = [c["benchmark_cost_usd"] for c in evaluated if c["free"] is free]
+            assert costs == sorted(costs)
         # unevidenced siblings (a model's `siblings`) are the last legs, after every evaluated candidate
         flags = [bool(c.get("unevidenced")) for c in candidates]
         assert flags == sorted(flags)

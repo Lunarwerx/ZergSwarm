@@ -505,7 +505,7 @@ async def _book_asks(results: list, kind: str, extra: tuple = ()) -> dict:
 
 @_served
 @_returns_errors
-async def zswarm_decide(items: list[dict], escalate_below: float = 0.7, fallback_model: str = "auto", batch: int = 1, model: str = "jev-latest") -> dict:
+async def zswarm_decide(items: list[dict], escalate_below: float = 0.7, fallback_model: str = "auto", batch: int = 1, model: str = "jev-1.13.0") -> dict:
     """TYPED decisions over many items in one call, fast: classify, route, yes/no, grade on a scale.
 
     Each item: {id?, state (text or any JSON), question, type: choice | yesno | score, options}. options is a list of
@@ -515,9 +515,11 @@ async def zswarm_decide(items: list[dict], escalate_below: float = 0.7, fallback
     under escalate_below confidence is re-asked through the published decision capability profile.
     If no valid stronger answer is obtained, the decision remains unanswered with an explicit error.
     The desktop orchestrator retains final authority. escalate_below=0 trusts Jev on
-    everything, 1.01 sends everything to the fallback. batch packs up to 5 items per Jev call (more hurt accuracy).
+    everything, 1.01 sends everything to the fallback. Items with the same state always share one Jev call (the
+    state is read and billed once); batch also packs up to 5 unrelated items per call (more hurt accuracy).
     NOT for arithmetic, counting, dates or writing text (Jev is weak there by design): use zswarm_ask for those.
-    model 'featherless-ai/<Model>-classifier' sends the typed leg to Featherless's keyless Simple Jev demo instead:
+    model defaults to jev-1.13.0, the version the thresholds were measured on (typesafe.MODEL); 'jev-latest' is the
+    moving alias. model 'featherless-ai/<Model>-classifier' sends the typed leg to Featherless's keyless Simple Jev demo instead:
     for re-tests only, it measured no better than Jev and worse calibrated (docs/BENCH-2026-09-24-simple-jev.md).
     Returns answers [{id, answer, source, jev: {answer, confidence, probabilities}, fallback?}] plus a cost summary.
     """

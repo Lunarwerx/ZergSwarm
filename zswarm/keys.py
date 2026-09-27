@@ -134,6 +134,10 @@ async def probe(only: str | None = None) -> dict:
         keys = config.load_api_keys(name)
         if not keys:
             continue
+        spec = config.PROVIDERS[name]
+        if spec.get("check_model") and not spec.get("balance_path"):
+            out["providers"][name] = await _check_each(name, keys)
+            continue
         async with ChatClient(api_keys=keys, provider=name) as c:
             before = set(c.pool.disabled())
             if not c.spec.get("balance_path"):
@@ -153,6 +157,27 @@ async def probe(only: str | None = None) -> dict:
              for p, v in out["providers"].items() if v.get("disabled_now") or v.get("recovered")]
     out["note"] = "; ".join(moved) or "probed every key; nothing moved in or out of the disabled slot"
     return out
+
+
+async def _check_each(name: str, keys: list[str], width: int = 16) -> dict:
+    """A provider with no balance to read whose model list answers ANY key (NVIDIA): the only honest probe is the key
+    check's one-token chat, so every key gets one. A refused key moves to the disabled slot and one that answers again
+    comes back out (check does both); a key that could not be checked right now (timeout, overload) moves nowhere."""
+    import asyncio
+
+    before = set(KeyPool(keys, name).disabled())
+    sem = asyncio.Semaphore(width)
+
+    async def one(k: str) -> dict:
+        async with sem:
+            return await check(name, config.fingerprint(k))
+
+    rows = await asyncio.gather(*(one(k) for k in keys))
+    after = set(KeyPool(keys, name).disabled())
+    count = lambda result: sum(1 for r in rows if r.get("result") == result)  # noqa: E731
+    return {"keys": len(rows), "usable": count("ok"), "rejected": count("rejected"), "unchecked": count("unchecked"),
+            "disabled_now": sorted(after - before), "recovered": sorted(before - after), "still_disabled": sorted(after),
+            "rows": rows}
 
 
 async def check(provider: str, fingerprint: str) -> dict:

@@ -91,6 +91,40 @@ async def _request_headers(ctx, call_next):
         REQUEST.reset(token)
 
 
+# A client that drops while Windows is still accepting it (a probe that gave up, a chat closing) fails that ONE
+# accept with WinError 64, and CPython's proactor serving loop answers ANY accept error by closing the LISTENING
+# socket (asyncio/proactor_events.py _start_serving, 3.14.2): the server lives on, running its jobs, but deaf. The next
+# chat then finds nothing on the port and starts another server, which adopts the deaf one's running jobs while the
+# deaf one keeps running them. Three servers were on 7790 on 2026-09-27, each start preceded by that WinError 64.
+_DROPPED_MID_ACCEPT = {64, 1236}  # ERROR_NETNAME_DELETED, ERROR_CONNECTION_ABORTED
+
+
+def keep_listening_through_dropped_clients() -> None:
+    """On Windows, retry an accept whose client vanished instead of letting it close the listener."""
+    if os.name != "nt":
+        return
+    import asyncio
+    from asyncio import windows_events
+
+    accept = windows_events.IocpProactor.accept
+    if getattr(accept, "zswarm_retrying", False):
+        return
+
+    def retrying(self, listener):
+        async def next_client():
+            while True:
+                try:
+                    return await accept(self, listener)
+                except OSError as e:
+                    if not isinstance(e, ConnectionResetError) and getattr(e, "winerror", None) not in _DROPPED_MID_ACCEPT:
+                        raise
+
+        return asyncio.ensure_future(next_client(), loop=self._loop)
+
+    retrying.zswarm_retrying = True
+    windows_events.IocpProactor.accept = retrying
+
+
 def serve(port: int = PORT) -> None:
     """Run the shared server in this process (blocks). `zswarm.py mcp --http [--port N]`."""
     global ACTIVE, SERVING_PORT
@@ -98,6 +132,7 @@ def serve(port: int = PORT) -> None:
 
     from .mcp_server import mcp
 
+    keep_listening_through_dropped_clients()
     ACTIVE, SERVING_PORT = True, port
     config.ensure_dirs()
     from . import verdict

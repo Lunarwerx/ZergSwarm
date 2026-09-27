@@ -155,22 +155,22 @@ def test_a_running_task_reports_its_age_and_is_not_listed_as_queued(tmp_path, mo
 
     class _SlowClient(_FakeClient):
         async def chat(self, messages, **kw):
-            await asyncio.sleep(0.12)
+            await asyncio.sleep(1.2)
             return await super().chat(messages, **kw)
 
     async def go():
         m = JobManager(client=_SlowClient())
         tasks = [Task.from_dict({"id": f"t{i}", "prompt": "x", "cwd": str(tmp_path), "tools": "none", "model": "deepseek-flash"}, {}, i) for i in range(3)]
         job = m.submit(tasks, concurrency=1)
-        await asyncio.sleep(0.11)
+        await asyncio.sleep(1.1)
         mid = job.summary(), job_payload(job, 100)
         await m.wait(job.id, 20)
         return mid, job
 
     (summary, payload), job = asyncio.run(go())
     assert summary["counts"].get("running") == 1 and summary["counts"].get("pending") == 2, summary["counts"]
-    assert summary["oldest_running_s"] >= 0.1, summary
-    assert [r["id"] for r in payload["running"]] == ["t0"] and payload["running"][0]["elapsed_s"] >= 0.1, payload
+    assert summary["oldest_running_s"] >= 1.0, summary
+    assert [r["id"] for r in payload["running"]] == ["t0"] and payload["running"][0]["elapsed_s"] >= 1.0, payload
     assert payload["pending"] == ["t1", "t2"], payload  # queued only - the running task is not repeated here
     assert "1 running" in payload["hint"] and "2 queued" in payload["hint"], payload["hint"]
     assert job.summary()["oldest_running_s"] == 0.0  # nothing runs once the job is done

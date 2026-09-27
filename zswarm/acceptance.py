@@ -63,82 +63,105 @@ def split_commands(command: str) -> list[tuple[list[str], str | None]] | None:
     """Each simple command's argv (quotes removed, redirections dropped) and the operator after it, or
     None when the shell structure is too rich to judge. Parsed, not searched: `echo "pytest passed"` is
     one command whose argv starts with echo, so a line that only MENTIONS the command never matches."""
-    s = command.replace("\\\n", "")
-    segs: list[tuple[list[str], str | None]] = []
-    argv: list[str] = []
-    word: list[str] = []
-    quote: str | None = None
-    in_word = drop_next = False
-    i = 0
-
-    def flush() -> None:
-        nonlocal word, in_word, drop_next
-        if in_word:
-            if not drop_next:
-                argv.append("".join(word))
-            drop_next = False
-        word, in_word = [], False
-
-    while i < len(s):
-        c = s[i]
-        if quote == "'":
-            quote = None if c == "'" else quote
-            if quote:
-                word.append(c)
-            i += 1
-            continue
-        if c == "`" or s.startswith("$(", i):
-            return None  # command substitution runs code this parse cannot see
-        if c == "\\" and i + 1 < len(s):
-            word.append(s[i + 1])
-            in_word = True
-            i += 2
-            continue
-        if quote == '"':
-            quote = None if c == '"' else quote
-            if quote:
-                word.append(c)
-            i += 1
-            continue
-        if c in "'\"":
-            quote, in_word = c, True
-            i += 1
-            continue
-        if s.startswith("<<", i):
+    sp = _Splitter(command.replace("\\\n", ""))
+    while sp.i < len(sp.s):
+        if not sp.step():
             return None
+    return sp.finish()
+
+
+class _Splitter:
+    """One split_commands pass: the simple commands so far, and the argv and word being built. Each step
+    consumes one character (or one operator) and returns False when the structure is too rich to judge."""
+
+    def __init__(self, s: str) -> None:
+        self.s = s
+        self.segs: list[tuple[list[str], str | None]] = []
+        self.argv: list[str] = []
+        self.word: list[str] = []
+        self.quote: str | None = None
+        self.in_word = self.drop_next = False
+        self.i = 0
+
+    def flush(self) -> None:
+        if self.in_word:
+            if not self.drop_next:
+                self.argv.append("".join(self.word))
+            self.drop_next = False
+        self.word, self.in_word = [], False
+
+    def step(self) -> bool:
+        c = self.s[self.i]
+        if self.quote == "'":
+            return self._quoted(c)
+        if c == "`" or self.s.startswith("$(", self.i):
+            return False  # command substitution runs code this parse cannot see
+        if c == "\\" and self.i + 1 < len(self.s):
+            self.word.append(self.s[self.i + 1])
+            self.in_word = True
+            self.i += 2
+            return True
+        if self.quote == '"':
+            return self._quoted(c)
+        return self._bare(c)
+
+    def _quoted(self, c: str) -> bool:
+        if c == self.quote:
+            self.quote = None
+        else:
+            self.word.append(c)
+        self.i += 1
+        return True
+
+    def _bare(self, c: str) -> bool:
+        s, i = self.s, self.i
+        if c in "'\"":
+            self.quote, self.in_word = c, True
+            self.i += 1
+            return True
+        if s.startswith("<<", i):
+            return False
         redirect = next((r for r in _REDIRECTS if s.startswith(r, i)), None)
         if redirect:
-            fd = "".join(word) if in_word and word and "".join(word).isdigit() else None
-            if fd is not None:
-                word, in_word = [], False  # "2>&1": the 2 is a file descriptor, not an argument
-            flush()
-            drop_next = True  # the redirect target is not an argument either
-            i += len(redirect)
-            continue
+            self._redirect(redirect)
+            return True
         op = next((o for o in _SEPARATORS if s.startswith(o, i)), None)
         if op or c in " \t\r":
-            flush()
-            if op:
-                if op in _UNJUDGED:
-                    return None
-                if argv or op not in (";", "\n"):  # a blank line is not a command
-                    segs.append((argv, op))
-                argv = []
-                i += len(op)
-            else:
-                i += 1
-            continue
-        word.append(c)
-        in_word = True
-        i += 1
-    if quote:
-        return None
-    flush()
-    if argv:
-        segs.append((argv, None))
-    elif segs and segs[-1][1] in (";", "\n"):
-        segs[-1] = (segs[-1][0], None)  # "pytest -q;" and a trailing newline end the list, they chain nothing
-    return [(_strip_assignments(a), op) for a, op in segs]
+            return self._separate(op)
+        self.word.append(c)
+        self.in_word = True
+        self.i += 1
+        return True
+
+    def _redirect(self, redirect: str) -> None:
+        if self.in_word and self.word and "".join(self.word).isdigit():
+            self.word, self.in_word = [], False  # "2>&1": the 2 is a file descriptor, not an argument
+        self.flush()
+        self.drop_next = True  # the redirect target is not an argument either
+        self.i += len(redirect)
+
+    def _separate(self, op: str | None) -> bool:
+        self.flush()
+        if not op:
+            self.i += 1
+            return True
+        if op in _UNJUDGED:
+            return False
+        if self.argv or op not in (";", "\n"):  # a blank line is not a command
+            self.segs.append((self.argv, op))
+        self.argv = []
+        self.i += len(op)
+        return True
+
+    def finish(self) -> list[tuple[list[str], str | None]] | None:
+        if self.quote:
+            return None
+        self.flush()
+        if self.argv:
+            self.segs.append((self.argv, None))
+        elif self.segs and self.segs[-1][1] in (";", "\n"):
+            self.segs[-1] = (self.segs[-1][0], None)  # "pytest -q;" and a trailing newline end the list, they chain nothing
+        return [(_strip_assignments(a), op) for a, op in self.segs]
 
 
 def _strip_assignments(argv: list[str]) -> list[str]:

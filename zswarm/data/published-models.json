@@ -1108,6 +1108,92 @@
       "gdpval_ci": {},
       "cached_input": 0.125,
       "cache_write": null
+    },
+    {
+      "slug": "kimi-k3",
+      "name": "Kimi K3 (max)",
+      "short": "Kimi K3 (max)",
+      "creator": "Moonshot AI",
+      "score": 44.0,
+      "cost": 2.0,
+      "input": 3,
+      "output": 15,
+      "source": "https://artificialanalysis.ai/models/kimi-k3",
+      "pareto": false,
+      "full_name": "Kimi K3 (max)",
+      "release_date": "2026-07-16",
+      "scores": {
+        "aa-briefcase": 1505.22,
+        "gdpval-aa": 1523.97,
+        "automationbench-aa": 0.5827297780015204,
+        "terminalbench-4-0": 0.126262626262626,
+        "scicode": 0.594907407407407,
+        "humanitys-last-exam": 0.468952734012975,
+        "gdp-pdf": 0.22,
+        "critpt": 0.234285714285714,
+        "omniscience": 19.7,
+        "long-context": 0.886666666666667
+      },
+      "score_sources": {
+        "aa-briefcase": "https://artificialanalysis.ai/models/kimi-k3",
+        "gdpval-aa": "https://artificialanalysis.ai/models/kimi-k3",
+        "automationbench-aa": "https://artificialanalysis.ai/models/kimi-k3",
+        "terminalbench-4-0": "https://artificialanalysis.ai/models/kimi-k3",
+        "scicode": "https://artificialanalysis.ai/models/kimi-k3",
+        "humanitys-last-exam": "https://artificialanalysis.ai/models/kimi-k3",
+        "gdp-pdf": "https://artificialanalysis.ai/models/kimi-k3",
+        "critpt": "https://artificialanalysis.ai/models/kimi-k3",
+        "omniscience": "https://artificialanalysis.ai/models/kimi-k3",
+        "long-context": "https://artificialanalysis.ai/models/kimi-k3"
+      },
+      "omniscience_detail": null,
+      "briefcase_ci": null,
+      "gdpval_ci": null,
+      "cached_input": null,
+      "cache_write": null
+    },
+    {
+      "slug": "nvidia-nemotron-3-ultra-550b-a55b",
+      "name": "Nemotron 3 Ultra (max)",
+      "short": "Nemotron 3 Ultra (max)",
+      "creator": "NVIDIA",
+      "score": 23.0,
+      "cost": 0.6,
+      "input": 0.6,
+      "output": 2.5,
+      "source": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+      "pareto": false,
+      "full_name": "Nemotron 3 Ultra 550B A55B (Reasoning)",
+      "release_date": "2026-06-04",
+      "scores": {
+        "aa-briefcase": 876.34,
+        "gdpval-aa": 1000.35,
+        "automationbench-aa": 0.02986349541593992,
+        "terminalbench-4-0": 0.00505050505050505,
+        "scicode": 0.402777777777778,
+        "humanitys-last-exam": 0.284059314179796,
+        "gdp-pdf": 0.05,
+        "critpt": 0.0314285714285714,
+        "omniscience": -0.4,
+        "long-context": 0.793333333333333
+      },
+      "score_sources": {
+        "aa-briefcase": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "gdpval-aa": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "automationbench-aa": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "terminalbench-4-0": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "scicode": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "humanitys-last-exam": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "gdp-pdf": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "critpt": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "omniscience": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b",
+        "long-context": "https://artificialanalysis.ai/models/nvidia-nemotron-3-ultra-550b-a55b"
+      },
+      "omniscience_detail": null,
+      "briefcase_ci": null,
+      "gdpval_ci": null,
+      "cached_input": null,
+      "cache_write": null
     }
   ],
   "benchmarks": {
@@ -1142,7 +1228,7 @@
       "source": "https://artificialanalysis.ai/evaluations/scicode"
     },
     "humanitys-last-exam": {
-      "name": "Humanity\u00e2\u20ac\u2122s Last Exam",
+      "name": "Humanityâ€™s Last Exam",
       "relevance": "Difficult multidisciplinary reasoning",
       "unit": "% correct; AA text, no tools",
       "source": "https://artificialanalysis.ai/evaluations/humanitys-last-exam"
@@ -1172,7 +1258,7 @@
       "source": "https://artificialanalysis.ai/evaluations/critpt"
     }
   },
-  "scope": "22 selected exact configurations; not an exhaustive catalogue. All 220 component scores sourced, no new model benchmarks.",
+  "scope": "24 selected exact configurations; not an exhaustive catalogue. All 240 component scores sourced, no new model benchmarks. kimi-k3 and nvidia-nemotron-3-ultra-550b-a55b were added 2026-09-27 from the same source, for their free NVIDIA routes.",
   "selection_policy": "Published task-specific evidence first; choose cheapest capable available Swarm route, escalate for quality or capacity. Desktop Opus 5.5 retains orchestration and final decisions.",
   "cost_note": "Measured AA index cost per task, rounded as published; not a prediction of production cost. Token rates are separate, current standard API reference rates.",
   "limitations": [

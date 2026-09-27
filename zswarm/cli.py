@@ -248,10 +248,24 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     argv = list(sys.argv[1:] if argv is None else argv)
+    from . import fleetstats
+
     if argv and argv[0] in PIPELINE:
-        return importlib.import_module(f".{PIPELINE_MODULE.get(argv[0], argv[0])}", __package__).main(argv[1:])
+        fleetstats.send("app_open", cmd=argv[0])
+        try:
+            return importlib.import_module(f".{PIPELINE_MODULE.get(argv[0], argv[0])}", __package__).main(argv[1:])
+        finally:
+            fleetstats.flush()
     parser = build_parser()
     a = parser.parse_args(argv)
+    fleetstats.send("app_open", cmd=a.cmd)
+    try:
+        return _dispatch(a, parser)
+    finally:
+        fleetstats.flush()
+
+
+def _dispatch(a, parser) -> int:
     if a.cmd == "help":
         return clihelp.cmd_help(a, parser)
     if a.cmd == "skill":

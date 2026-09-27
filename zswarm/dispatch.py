@@ -287,12 +287,192 @@ async def _unless_tripped(gate, run):
     return await run
 
 
-async def run_selected(mgr, job, task, warm, is_pilot):
+@dataclasses.dataclass
+class _Run:
+    """One evaluated-profile task's walk down its legs: what every leg reads, and what it leaves the next one. `gate`,
+    `served` and `tripped` are the current leg's, kept here so the requeue check reads them even when the leg raised."""
+    mgr: object
+    job: object
+    task: object
+    warm: object
+    is_pilot: bool
+    plan: dict
+    candidates: list
+    terminal: int
+    budget: object = None
+    attempts: list = dataclasses.field(default_factory=list)
+    messages: list | None = None
+    transcripts: list = dataclasses.field(default_factory=list)
+    requeues: int = 0
+    gate: object = None
+    served: object = None
+    tripped: bool = False
+
+
+def _legs(plan, task):
+    return plan["candidates"] if task.route else plan["candidates"][:1]
+
+
+def _leg_key(task, model):
+    # cc speaks a provider's Messages endpoint, so its breakers are its own ("cc:<leg>").
+    return f"cc:{model}" if task.backend == "cc" else model
+
+
+def _ordered(plan, task, gates):
+    """(plan, candidates, terminal): the legs rebiased by provider pressure, then ordered by the circuit breaker as it
+    does a pinned route's (jobs._run_legs): an open leg goes last, and the real last leg is the last one no closed
+    leg follows, so a healthy fallback moved ahead of it runs untimed."""
+    plan = {**plan, "candidates": selection.rebias(plan["candidates"], lambda p: _pressure(p, gates))}
+    candidates = _legs(plan, task)
+    terminal = len(candidates) - 1
+    if task.route:
+        front, back = breaker.split([_leg_key(task, c["model"]) for c in candidates])
+        rank = {k: n for n, k in enumerate(front + back)}
+        candidates = sorted(candidates, key=lambda c: rank[_leg_key(task, c["model"])])
+        plan = {**plan, "candidates": candidates}
+        terminal = len(front) - 1 if front else terminal
+    return plan, candidates, terminal
+
+
+def _used(task, attempts):
+    """(spent, ran, turns, remaining) over the legs run so far."""
+    spent = sum(r.cost_usd or 0 for r in attempts)
+    ran = sum((r.seconds or 0) - (r.rested_s or 0) for r in attempts)  # 429 waits are queue time too
+    turns = sum(r.turns for r in attempts)
+    remaining = task.max_cost_usd - spent if task.max_cost_usd else 0
+    return spent, ran, turns, remaining
+
+
+def _budget_stop(run, used):
+    """The failure that ends the walk before the next leg when the task's or the job's budget is spent, else None."""
+    task, job = run.task, run.job
+    spent, ran, turns, remaining = used
+    if ran >= task.timeout_s or turns >= task.max_turns or (task.max_cost_usd and remaining <= 0):
+        return _failure(task.id, task.backend, task.model, "task budget exhausted across Swarm routes", run.plan)
+    if job.budget_usd is not None and job.cost() + spent >= job.budget_usd:
+        return _failure(task.id, task.backend, task.model, "job budget exhausted before Swarm escalation", run.plan)
+    return None
+
+
+async def _start_leg(run, child, leg, timed):
+    """Run one leg to its (result, transcript). Raises what the leg raised, with run.gate/served set as far as it got."""
     from .agent import run_api_task
-    from .jobs import leg_unavailable, settle_too_large
+
+    mgr, job = run.mgr, run.job
+    client = mgr.client_for(leg)
+    if _dead(getattr(client, "pool", None)):
+        # Another task already found every key of this leg disabled: zero seconds, straight to the next leg.
+        raise NoUsableKey(f"every {client.pool.provider} key is disabled; leg skipped before it started")
+    await mgr._park_broke_keys(client)
+    if run.task.backend == "cc":
+        if run.attempts:
+            child.prompt += "\n\nContinue only unfinished work. Prior attempts may have edited files; inspect current files first.\n" + (run.attempts[-1].answer or "")
+        return await mgr._run_cc_with_rotation(child, client.pool)
+    run.gate = mgr._gate_for(leg, client)
+    run.served = run.gate.served if run.gate is not None else None
+    res, transcript = await mgr._gated(job, run.gate, _unless_tripped(run.gate, run_api_task(
+        client, child, warm=run.warm, is_pilot=run.is_pilot, user_tag=job.id,
+        slow_turn_s=config.SLOW_LEG_TURN_S if timed else None,
+        resume_messages=_resume(run.messages, config.provider_of(leg)) if run.messages else None,
+        **({"job_budget": run.budget} if run.budget is not None else {}))))
+    run.messages = transcript
+    return res, transcript
+
+
+async def _try_leg(run, candidate, timed, used):
+    """One pass over `candidate`: claim its provider, run it, record the outcome. Returns the leg's result."""
+    from .jobs import leg_unavailable
+
+    task, plan = run.task, run.plan
+    _spent, ran, turns, remaining = used
+    leg = candidate["model"]
+    child = dataclasses.replace(task, model=leg, profile=None,
+                                reasoning_effort=candidate.get("reasoning_effort"), thinking=candidate.get("thinking"),
+                                max_turns=task.max_turns-turns, max_cost_usd=remaining, timeout_s=max(.01, task.timeout_s-ran))
+    run.job.results[task.id].model = leg
+    run.gate, run.served, run.tripped = None, None, False
+    # Claimed on every pass, the PoolSaturated requeue included, and released in the finally: no claim leaks.
+    selection.claim(candidate.get("provider"))
+    try:
+        res, transcript = await _start_leg(run, child, leg, timed)
+    except _Tripped as exc:
+        res, transcript, run.tripped = _failure(task.id, task.backend, leg, f"PoolSaturated: {exc}", plan), None, True
+    except RuntimeError as exc:
+        res = _failure(task.id, task.backend, leg, f"NoUsableKey: {exc}", plan)
+        transcript = None
+    finally:
+        selection.release(candidate.get("provider"))
+    selection.note_result(candidate.get("provider"), res.error)
+    selection.note_speed(leg, res)
+    if task.route and not run.tripped:
+        breaker.record(_leg_key(task, leg), res, leg_unavailable(res))
+    run.attempts.append(res)
+    run.transcripts.append({"model": leg, "transcript": transcript})
+    run.is_pilot = False
+    return res
+
+
+def _requeue(run, res, leg, last):
+    """True when the task goes back through the last leg's gate; when that gate served nothing during the wait, trips
+    it and says so on `res` instead."""
+    task = run.task
+    if not (last and task.backend != "cc" and not run.tripped and "PoolSaturated" in (res.error or "")
+            and run.requeues < config.SATURATED_REQUEUES):
+        return False
+    if run.gate is None or run.gate.served > run.served:
+        # The last leg's pool is serving, just not at this width: its 429s halved the provider's gate, so the
+        # task goes back through that gate with its transcript kept, instead of failing. Width is the caller's
+        # ceiling, not a promise the provider can keep (job 20260925-145240-b39d: 19 of 23 died PoolSaturated).
+        run.requeues += 1
+        return True
+    # Nothing this process sent the provider was answered for the whole wait: the pool is saturated from
+    # outside the job, and a requeue only waits again. Jobs 20260925-184445-98ac and -184659-a701 (Gemini,
+    # 429 "request limit per minute for a region" on all 760 keys) requeued every task six times, 14 minutes
+    # each with nothing to show, while their status read `pending`. The trip fails the next tasks at once.
+    provider = config.provider_of(leg)
+    run.gate.trip(f"no {provider} call from this process was answered during task {task.id}'s "
+                  f"{config.SATURATED_REST_S:.0f} s wait, so its pool is saturated from outside this job; its tasks "
+                  f"fail at once until a call succeeds or {config.SATURATED_REST_S:.0f} s pass", config.SATURATED_REST_S)
+    res.error = (f"{res.error} [not requeued: no {provider} call from this process was answered during the wait, "
+                 f"so the pool is saturated from outside this job; evaluated routes: "
+                 f"{', '.join(c['model'] for c in run.candidates)}]")
+    return False
+
+
+async def _walk_legs(run):
+    """Run the legs in order until one serves, fails for a reason another leg cannot fix, or a budget is spent.
+    The task's clock is its RUN time: the seconds its legs actually ran (Result.seconds). Waiting on a
+    provider's gate and the key-balance probe are queue time and spend none of it (leggate.py's contract).
+    Job 20260925-143635-e3f6: 23 tasks at width 24 spent their whole 600 s queued behind dead DeepSeek legs
+    and a ramping Gemini gate, and ended `task timeout exhausted` with zero turns."""
+    from .jobs import leg_unavailable
+
+    res, i = None, 0
+    while i < len(run.candidates):
+        if any(r.cost_usd is None for r in run.attempts):
+            break  # unknown billing cannot safely authorize another paid attempt
+        used = _used(run.task, run.attempts)
+        stop = _budget_stop(run, used)
+        if stop is not None:
+            res = stop
+            run.attempts.append(res)
+            break
+        candidate, last = run.candidates[i], i == len(run.candidates) - 1
+        # a crawling leg fails over only while a closed leg follows it
+        res = await _try_leg(run, candidate, i < run.terminal, used)
+        if _requeue(run, res, candidate["model"], last):
+            continue
+        if not leg_unavailable(res):
+            break  # semantic/task failures need the orchestrator's acceptance check, never blind edit replay
+        i += 1
+    return res
+
+
+async def run_selected(mgr, job, task, warm, is_pilot):
+    from .jobs import settle_too_large
 
     plan = plan_for(task)
-    candidates = plan["candidates"] if task.route else plan["candidates"][:1]
+    candidates = _legs(plan, task)
     if not candidates:
         return _failure(task.id, task.backend, task.model,
                         "NoCapableSwarmRoute: no available evaluated route meets the task requirements; "
@@ -302,109 +482,13 @@ async def run_selected(mgr, job, task, warm, is_pilot):
         await warm.wait()
     # Ranked AFTER the pilot gate and with no await before the first leg's claim, so every task of a batch sees the
     # claims of the tasks ahead of it and a near-equal leg takes the overflow before the cheapest one saturates.
-    gates = getattr(mgr, "_gates", None)
-    plan = {**plan, "candidates": selection.rebias(plan["candidates"], lambda p: _pressure(p, gates))}
-    candidates = plan["candidates"] if task.route else plan["candidates"][:1]
-    # The circuit breaker orders these legs as it does a pinned route's (jobs._run_legs): an open leg goes last, and
-    # the real last leg is the last one no closed leg follows, so a healthy fallback moved ahead of it runs untimed.
-    # cc speaks a provider's Messages endpoint, so its breakers are its own ("cc:<leg>").
-    key = (lambda m: f"cc:{m}") if task.backend == "cc" else (lambda m: m)
-    terminal = len(candidates) - 1
-    if task.route:
-        front, back = breaker.split([key(c["model"]) for c in candidates])
-        rank = {k: n for n, k in enumerate(front + back)}
-        candidates = sorted(candidates, key=lambda c: rank[key(c["model"])])
-        plan = {**plan, "candidates": candidates}
-        terminal = len(front) - 1 if front else terminal
-    budget = getattr(mgr, "_budgets", {}).get(job.id)  # the job's budget_usd ceiling, reserved against before every api turn
-    # The task's clock is its RUN time: the seconds its legs actually ran (Result.seconds). Waiting on a
-    # provider's gate and the key-balance probe are queue time and spend none of it (leggate.py's contract).
-    # Job 20260925-143635-e3f6: 23 tasks at width 24 spent their whole 600 s queued behind dead DeepSeek legs
-    # and a ramping Gemini gate, and ended `task timeout exhausted` with zero turns.
-    attempts, messages, transcripts = [], None, []
-    res = None
-    requeues, i = 0, 0
-    while i < len(candidates):
-        candidate, last = candidates[i], i == len(candidates) - 1
-        timed = i < terminal  # a crawling leg fails over only while a closed leg follows it
-        if any(r.cost_usd is None for r in attempts):
-            break  # unknown billing cannot safely authorize another paid attempt
-        spent = sum(r.cost_usd or 0 for r in attempts)
-        ran = sum((r.seconds or 0) - (r.rested_s or 0) for r in attempts)  # 429 waits are queue time too
-        turns = sum(r.turns for r in attempts)
-        remaining = task.max_cost_usd - spent if task.max_cost_usd else 0
-        if ran >= task.timeout_s or turns >= task.max_turns or (task.max_cost_usd and remaining <= 0):
-            res = _failure(task.id, task.backend, task.model, "task budget exhausted across Swarm routes", plan)
-            attempts.append(res)
-            break
-        if job.budget_usd is not None and job.cost() + spent >= job.budget_usd:
-            res = _failure(task.id, task.backend, task.model, "job budget exhausted before Swarm escalation", plan)
-            attempts.append(res)
-            break
-        leg = candidate["model"]
-        child =dataclasses.replace(task, model=leg, profile=None,
-                                    reasoning_effort=candidate.get("reasoning_effort"), thinking=candidate.get("thinking"),
-                                    max_turns=task.max_turns-turns, max_cost_usd=remaining, timeout_s=max(.01, task.timeout_s-ran))
-        job.results[task.id].model = leg
-        gate, served, tripped = None, None, False
-        # Claimed on every pass, the PoolSaturated requeue included, and released in the finally: no claim leaks.
-        selection.claim(candidate.get("provider"))
-        try:
-            client = mgr.client_for(leg)
-            if _dead(getattr(client, "pool", None)):
-                # Another task already found every key of this leg disabled: zero seconds, straight to the next leg.
-                raise NoUsableKey(f"every {client.pool.provider} key is disabled; leg skipped before it started")
-            await mgr._park_broke_keys(client)
-            if task.backend == "cc":
-                if attempts:
-                    child.prompt += "\n\nContinue only unfinished work. Prior attempts may have edited files; inspect current files first.\n" + (attempts[-1].answer or "")
-                res, transcript = await mgr._run_cc_with_rotation(child, client.pool)
-            else:
-                gate = mgr._gate_for(leg, client)
-                served = gate.served if gate is not None else None
-                res, transcript = await mgr._gated(job, gate, _unless_tripped(gate, run_api_task(
-                    client, child, warm=warm, is_pilot=is_pilot, user_tag=job.id,
-                    slow_turn_s=config.SLOW_LEG_TURN_S if timed else None,
-                    resume_messages=_resume(messages, config.provider_of(leg)) if messages else None,
-                    **({"job_budget": budget} if budget is not None else {}))))
-                messages = transcript
-        except _Tripped as exc:
-            res, transcript, tripped = _failure(task.id, task.backend, leg, f"PoolSaturated: {exc}", plan), None, True
-        except RuntimeError as exc:
-            res = _failure(task.id, task.backend, leg, f"NoUsableKey: {exc}", plan)
-            transcript = None
-        finally:
-            selection.release(candidate.get("provider"))
-        selection.note_result(candidate.get("provider"), res.error)
-        if task.route and not tripped:
-            breaker.record(key(leg), res, leg_unavailable(res))
-        attempts.append(res)
-        transcripts.append({"model": leg, "transcript": transcript})
-        is_pilot = False
-        if last and task.backend != "cc" and not tripped and "PoolSaturated" in (res.error or "") and requeues < config.SATURATED_REQUEUES:
-            if gate is None or gate.served > served:
-                # The last leg's pool is serving, just not at this width: its 429s halved the provider's gate, so the
-                # task goes back through that gate with its transcript kept, instead of failing. Width is the caller's
-                # ceiling, not a promise the provider can keep (job 20260925-145240-b39d: 19 of 23 died PoolSaturated).
-                requeues += 1
-                continue
-            # Nothing this process sent the provider was answered for the whole wait: the pool is saturated from
-            # outside the job, and a requeue only waits again. Jobs 20260925-184445-98ac and -184659-a701 (Gemini,
-            # 429 "request limit per minute for a region" on all 760 keys) requeued every task six times, 14 minutes
-            # each with nothing to show, while their status read `pending`. The trip fails the next tasks at once.
-            provider = config.provider_of(leg)
-            gate.trip(f"no {provider} call from this process was answered during task {task.id}'s "
-                      f"{config.SATURATED_REST_S:.0f} s wait, so its pool is saturated from outside this job; its tasks "
-                      f"fail at once until a call succeeds or {config.SATURATED_REST_S:.0f} s pass", config.SATURATED_REST_S)
-            res.error = (f"{res.error} [not requeued: no {provider} call from this process was answered during the wait, "
-                         f"so the pool is saturated from outside this job; evaluated routes: "
-                         f"{', '.join(c['model'] for c in candidates)}]")
-        if not leg_unavailable(res):
-            break  # semantic/task failures need the orchestrator's acceptance check, never blind edit replay
-        i += 1
-    res = _fold(res, attempts, plan)
-    settle_too_large(res, [(r.model, r.error or "") for r in attempts], task.tools == "none")
-    return res, {"routes": transcripts}
+    plan, candidates, terminal = _ordered(plan, task, getattr(mgr, "_gates", None))
+    run = _Run(mgr=mgr, job=job, task=task, warm=warm, is_pilot=is_pilot, plan=plan, candidates=candidates,
+               terminal=terminal,
+               budget=getattr(mgr, "_budgets", {}).get(job.id))  # the job's budget_usd ceiling, reserved against before every api turn
+    res = _fold(await _walk_legs(run), run.attempts, run.plan)
+    settle_too_large(res, [(r.model, r.error or "") for r in run.attempts], task.tools == "none")
+    return res, {"routes": run.transcripts}
 
 
 async def ask_selected(mgr, prompt, *, profile="general", route=True, **kw):
@@ -452,6 +536,7 @@ async def ask_selected(mgr, prompt, *, profile="general", route=True, **kw):
         finally:
             selection.release(candidate.get("provider"))
         selection.note_result(candidate.get("provider"), res.error)
+        selection.note_speed(candidate["model"], res)
         if route:
             breaker.record(candidate["model"], res, leg_unavailable(res))
         attempts.append(res)

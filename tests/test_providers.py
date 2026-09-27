@@ -46,7 +46,7 @@ def test_without_the_overlay_the_builtins_stand():
     # deepseek-flash-hf / -or: the same model through Hugging Face and OpenRouter, the router's fallback legs.
     # The free-tier provider models were added 2026-09-20 when DeepSeek's direct keys ran out; they ship in
     # the package's provider files (not a machine-local one) so every clone routes the same way.
-    assert len([m for m in config.MODELS if m.startswith("rank:")]) == 29  # + gpt-oss-120b, qwen3.8-27b direct on Groq/Cerebras
+    assert len([m for m in config.MODELS if m.startswith("rank:")]) == 34  # + gpt-oss-120b, qwen3.8-27b direct on Groq/Cerebras, 5 on NVIDIA
     assert sorted(m for m in config.MODELS if not m.startswith("rank:")) == [
         "cerebras-gpt-oss-120b", "cerebras-qwen3.8-27b", "command-a", "command-r7b",
         "deepseek-flash", "deepseek-flash-hf", "deepseek-flash-or", "deepseek-v4-pro",

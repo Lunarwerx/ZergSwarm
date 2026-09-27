@@ -220,37 +220,12 @@ class Job:
         path = config.JOBS_DIR / job_id / "results.jsonl"
         if not path.exists():
             return doc
-        live: dict[str, dict] = {}
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # the last line of a file being appended to can be half-written
-                if isinstance(row, dict) and isinstance(row.get("id"), str):
-                    live[row["id"]] = row
-        except OSError:
-            return doc
+        live = _read_live_rows(path)
         if not live:
             return doc
         results = {**doc.get("results", {}), **live}
         doc = {**doc, "results": results}
-        counts: dict[str, int] = {}
-        for task in doc.get("tasks", []) or []:
-            tid = task.get("id") if isinstance(task, dict) else None
-            status = (results.get(tid) or {}).get("status", "pending") if tid else "pending"
-            counts[status] = counts.get(status, 0) + 1
-        costs = [r.get("cost_usd") for r in results.values() if isinstance(r, dict)]
-        doc["summary"] = {
-            **summary,
-            "counts": counts or summary.get("counts", {}),
-            "cost_usd": round(sum(c for c in costs if isinstance(c, (int, float))), 6),
-            "cost_unknown_tasks": sum(1 for c in costs if c is None),
-            "longest_task_s": round(max((r.get("seconds") or 0.0) for r in results.values()), 2) if results else 0.0,
-        }
+        doc["summary"] = _live_summary(summary, doc.get("tasks", []) or [], results)
         return doc
 
     @staticmethod
@@ -306,3 +281,50 @@ class Job:
                 # for every task that has returned since, and zswarm_jobs is the first place anyone looks
                 out.append(Job._overlay_live_results(job_id, doc)["summary"])  # a half-written or foreign entry is skipped, not fatal
         return out
+
+
+def _live_row(line: str) -> dict | None:
+    """One `results.jsonl` line as a result row with a string id, else None."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        return None  # the last line of a file being appended to can be half-written
+    return row if isinstance(row, dict) and isinstance(row.get("id"), str) else None
+
+
+def _read_live_rows(path: Path) -> dict[str, dict]:
+    """Every readable row of `results.jsonl` by task id, the last one winning; empty when the file cannot be read."""
+    live: dict[str, dict] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = _live_row(line)
+            if row is not None:
+                live[row["id"]] = row
+    except OSError:
+        return {}
+    return live
+
+
+def _live_counts(tasks: list, results: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        tid = task.get("id") if isinstance(task, dict) else None
+        status = (results.get(tid) or {}).get("status", "pending") if tid else "pending"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _live_summary(summary: dict, tasks: list, results: dict) -> dict:
+    """The record's summary with its counts, cost and longest task recomputed over the live results."""
+    counts = _live_counts(tasks, results)
+    costs = [r.get("cost_usd") for r in results.values() if isinstance(r, dict)]
+    return {
+        **summary,
+        "counts": counts or summary.get("counts", {}),
+        "cost_usd": round(sum(c for c in costs if isinstance(c, (int, float))), 6),
+        "cost_unknown_tasks": sum(1 for c in costs if c is None),
+        "longest_task_s": round(max((r.get("seconds") or 0.0) for r in results.values()), 2) if results else 0.0,
+    }

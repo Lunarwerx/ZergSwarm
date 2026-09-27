@@ -113,6 +113,32 @@ def test_batch_is_capped_at_five_items_per_jev_call():
     assert [len(q) for _, q in jev.calls] == [5, 5, 2] and all(a["answer"] == "yes" for a in out["answers"])
 
 
+def test_items_with_one_state_share_one_jev_call_and_each_answer_keeps_its_id():
+    team = {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.95, "technical": 0.05, "sales": 0}, "confidence": 0.9}
+    jev = FakeJev({"Which team?": team, "Urgent?": {"type": "noul", "noul": 0.9}, "Calm?": {"type": "noul", "noul": 0.1},
+                   "Angry?": {"type": "noul", "noul": 0.2}})
+    items = [_item("Which team?", id="a"), {"state": "Another ticket", "question": "Angry?", "id": "b"},
+             {"state": "My payouts failed", "question": "Urgent?", "id": "c"}, {"state": "My payouts failed", "question": "Calm?", "id": "d"}]
+    out = asyncio.run(d.decide(items, FakeMgr(), jev=jev, escalate_below=0))
+    shared = [(st, qs) for st, qs in jev.calls if len(qs) > 1]
+    assert len(jev.calls) == 2 and [(st, len(qs)) for st, qs in shared] == [("My payouts failed", 3)]  # the state goes once, as is
+    assert [(a["id"], a["answer"]) for a in out["answers"]] == [("a", "billing"), ("b", "no"), ("c", "yes"), ("d", "no")]
+
+
+def test_a_structured_question_reaches_jev_as_an_object():
+    q = {"candidate": {"name": "John Smith", "last_employer": "Google"}, "question": "Is the resume for `candidate`?"}
+
+    class Recorder(FakeJev):
+        async def ask(self, state, questions, model=typesafe.MODEL):
+            self.calls.append((state, questions))
+            return {"status": "ok", "answers": {k: {"type": "noul", "noul": 0.9} for k in questions}, "secs": 0.1, "in": 1, "out": 1,
+                    "model": "jev-1.13.0", "cost_usd": 0.0}
+
+    jev = Recorder({})
+    asyncio.run(d.decide([{"state": "resume text", "question": q, "type": "yesno"}], FakeMgr(), jev=jev, escalate_below=0))
+    assert jev.calls[0][1]["q0"]["instructions"] == q
+
+
 def test_batched_questions_point_at_their_own_slot():
     q = d.batched_question({"type": "choice", "state": {"premise": "p", "hypothesis": "h"}, "instructions": "Relation of `premise` and `hypothesis`?", "criteria": {"a": None}}, 3)
     assert q["instructions"] == "Relation of `items[3].premise` and `items[3].hypothesis`?"

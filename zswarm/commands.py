@@ -428,21 +428,29 @@ async def _keys_edit(a, action: str) -> int:
             if sys.stdin.isatty():
                 import getpass
 
-                key = getpass.getpass(f"{provider} API key (hidden): ")
+                text = getpass.getpass(f"{provider} API key(s), space-separated (hidden): ")
             else:
-                key = sys.stdin.readline()
-            out = settings.add_key(provider, key)
-            if not out["added"]:
-                print(f"{provider}: {out.get('note')} {out['fingerprint']}")
-                return 0
+                text = sys.stdin.read()  # several keys at once: one per line, or split by spaces or commas
+            batch = settings.split_keys(text)
+            if not batch:
+                raise settings.SettingsError("no key given on stdin or at the prompt")
             from . import keys
 
-            checked = await keys.check(provider, out["fingerprint"])
-            if checked.get("result") == "rejected":  # the console does the same: a refused key is not kept
-                settings.remove_key(provider, out["fingerprint"])
-                print(f"{provider} did not accept that key, so it was not kept: {checked.get('note')}", file=sys.stderr)
+            refused = 0
+            for key in batch:
+                out = settings.add_key(provider, key)
+                if not out["added"]:
+                    print(f"{provider}: {out.get('note')} {out['fingerprint']}")
+                    continue
+                checked = await keys.check(provider, out["fingerprint"])
+                if checked.get("result") == "rejected":  # the console does the same: a refused key is not kept
+                    settings.remove_key(provider, out["fingerprint"])
+                    print(f"{provider} did not accept key {out['fingerprint']}, so it was not kept: {checked.get('note')}", file=sys.stderr)
+                    refused += 1
+                    continue
+                print(f"{provider}: added {out['fingerprint']} ({checked.get('note')})")
+            if refused:
                 return 1
-            print(f"{provider}: added {out['fingerprint']} ({checked.get('note')})")
         else:
             if not (a.provider and a.fingerprint):
                 raise settings.SettingsError("zswarm keys remove <fingerprint> --provider <provider>")

@@ -775,6 +775,62 @@ class KeyPool:
         return out
 
 
+def _call_options(model: str, entry: dict, max_tokens: int | None, thinking: bool | None,
+                  reasoning_effort: str | None) -> tuple[int | None, bool | None, str | None]:
+    """(max_tokens, thinking, reasoning_effort) for one chat call: capped at the model's ceiling, defaults filled in.
+    A typed-only model is refused here, before anything is sent."""
+    if entry.get("kind") == "typed":
+        # Jev and its kind answer typed questions through their own API, never a chat: zswarm_decide calls them.
+        raise ValueError(f"{model} answers typed questions only (pick one, yes/no, rate on a scale); ask it through "
+                         "zswarm_decide, and give a task a chat model")
+    # A model's own output ceiling (`max_out` in its provider file) caps what a call asks for: Cohere refuses Command
+    # A asked for 16,000 tokens with a 400 (its limit is 8,192), which ended the call before it started (2026-09-26).
+    if max_tokens and entry.get("max_out"):
+        max_tokens = min(int(max_tokens), int(entry["max_out"]))
+    if reasoning_effort is None:
+        reasoning_effort = entry.get("default_reasoning_effort")
+    if thinking is None:
+        thinking = entry.get("default_thinking")
+    return max_tokens, thinking, reasoning_effort
+
+
+def _set_reasoning(body: dict, model: str, entry: dict, allowed: set, thinking: bool | None, reasoning_effort: str | None) -> None:
+    # `thinking=False` is DeepSeek's own switch; OpenRouter drops it and takes `reasoning: {enabled: false}` instead,
+    # and its `reasoning_effort` turns reasoning ON. A schema ask turns thinking off (agent.ask) and OpenRouter never
+    # heard it: Dredd's drafter on deepseek-flash-or spent all 4000 output tokens on reasoning, finish "length", no
+    # tool call, 0 chars, eight calls running (2026-09-24). The same call with reasoning off: 10.5 s, 0 reasoning
+    # tokens, a valid submit_result, a third of the cost (measured on the real prompt the same night).
+    mandatory = entry.get("reasoning_mandatory") or model in _REASONING_MANDATORY
+    if thinking is False and "thinking" not in allowed and "reasoning" in allowed and not mandatory:
+        body["reasoning"] = {"enabled": False}
+        body.pop("reasoning_effort", None)
+    elif entry.get("benchmark_slug") and "reasoning" in allowed and (thinking is True or reasoning_effort is not None):
+        body["reasoning"] = {"enabled": True}
+        if reasoning_effort is not None:
+            body["reasoning"]["effort"] = reasoning_effort
+
+
+def _chat_result(r: httpx.Response, attempts: int, model: str, t0: float, upstream_header: str | None) -> ChatResult:
+    data = r.json()
+    if upstream_header and isinstance(data, dict) and not data.get("provider") and r.headers.get(upstream_header):
+        data["provider"] = r.headers[upstream_header]  # a router that names the serving host in a header, not the body
+    choice = (data.get("choices") or [{}])[0]
+    usage = Usage.from_api(data.get("usage"))
+    now = dt.datetime.now(dt.timezone.utc)
+    # A provider that bills the call and says what it billed is the authority on its own cost; our price table
+    # is the fallback, and None ('- not measured') the fallback's fallback. OpenRouter routes one model id to
+    # several upstreams at different rates, so its number is the only honest one.
+    u = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    # OpenRouter says `cost`, the Hugging Face router `estimated_cost`: both are the provider's own figure.
+    reported = _num(u.get("cost")) if u.get("cost") is not None else _num(u.get("estimated_cost"))
+    return ChatResult(
+        message=choice.get("message") or {}, finish_reason=choice.get("finish_reason") or "", usage=usage, model=model,
+        seconds=time.perf_counter() - t0,
+        cost_usd=reported if reported is not None else config.cost_usd(model, usage.hit, usage.miss, usage.out, now),
+        peak=config.is_peak(now), attempts=attempts, raw=data,
+    )
+
+
 class ChatClient:
     """One provider's chat endpoint. `DeepSeekClient` is the same class under its older name."""
 
@@ -1081,46 +1137,33 @@ class ChatClient:
         model = config.resolve_model(model)
         owner = config.provider_of(model)
         entry = config.MODELS[model]
-        if entry.get("kind") == "typed":
-            # Jev and its kind answer typed questions through their own API, never a chat: zswarm_decide calls them.
-            raise ValueError(f"{model} answers typed questions only (pick one, yes/no, rate on a scale); ask it through "
-                             "zswarm_decide, and give a task a chat model")
-        # A model's own output ceiling (`max_out` in its provider file) caps what a call asks for: Cohere refuses Command
-        # A asked for 16,000 tokens with a 400 (its limit is 8,192), which ended the call before it started (2026-09-26).
-        if max_tokens and entry.get("max_out"):
-            max_tokens = min(int(max_tokens), int(entry["max_out"]))
-        if reasoning_effort is None:
-            reasoning_effort = entry.get("default_reasoning_effort")
-        if thinking is None:
-            thinking = entry.get("default_thinking")
+        max_tokens, thinking, reasoning_effort = _call_options(model, entry, max_tokens, thinking, reasoning_effort)
         if owner != self.provider:
             raise ValueError(f"model {model} belongs to provider {owner!r}; this client talks to {self.provider!r} (use JobManager.client_for)")
         # An armed fault (ZSWARM_FAULTS, faults.arm) fails this call here, before any request or spend, so a
         # test or a drill can make the Nth call to a leg unavailable and watch the route fail over.
         faults.check(self.provider, model)
+        api_id = config.api_model_id(model)  # `or:deepseek/deepseek-chat-v3.1` goes out as `deepseek/deepseek-chat-v3.1`
+        body = self._chat_body(model, entry, api_id, messages, tools=tools, tool_choice=tool_choice, max_tokens=max_tokens, thinking=thinking,
+                               reasoning_effort=reasoning_effort, response_format=response_format, temperature=temperature, user=user, stop=stop)
+        t0 = time.perf_counter()
+        r, attempts = await self._post_chat(body, model, api_id.endswith(":free"), rest_budget_s, last_leg)
+        return _chat_result(r, attempts, model, t0, self.spec.get("upstream_header"))
+
+    def _chat_body(self, model: str, entry: dict, api_id: str, messages: list[dict], *, tools: list[dict] | None, tool_choice: str | dict | None,
+                   max_tokens: int | None, thinking: bool | None, reasoning_effort: str | None, response_format: dict | None,
+                   temperature: float | None, user: str | None, stop: list[str] | None) -> dict:
+        """The request body, with only the fields this provider's endpoint accepts."""
         allowed = set(self.spec.get("options") or ())
         # Some OpenAI-compatible endpoints reject unknown/extra top-level fields with a 422 rather than
         # ignoring them. Mistral is strict about `user` ("extra_forbidden: body.user"), so a provider can
         # name standard fields to omit. Measured 2026-09-20: without this, magistral scored 0/24 on a 422.
         omit = set(self.spec.get("omit") or ())
-        api_id = config.api_model_id(model)  # `or:deepseek/deepseek-chat-v3.1` goes out as `deepseek/deepseek-chat-v3.1`
         # Provider-specific fields go only where the endpoint accepts them; a Gemini or Kimi call never sees DeepSeek's `thinking`.
         body = request_body(api_id, messages, tools=tools, tool_choice=tool_choice, max_tokens=max_tokens,
                             thinking=thinking if "thinking" in allowed else None, reasoning_effort=reasoning_effort if "reasoning_effort" in allowed else None,
                             response_format=response_format, user=None if "user" in omit else user, stop=stop)
-        # `thinking=False` is DeepSeek's own switch; OpenRouter drops it and takes `reasoning: {enabled: false}` instead,
-        # and its `reasoning_effort` turns reasoning ON. A schema ask turns thinking off (agent.ask) and OpenRouter never
-        # heard it: Dredd's drafter on deepseek-flash-or spent all 4000 output tokens on reasoning, finish "length", no
-        # tool call, 0 chars, eight calls running (2026-09-24). The same call with reasoning off: 10.5 s, 0 reasoning
-        # tokens, a valid submit_result, a third of the cost (measured on the real prompt the same night).
-        mandatory = entry.get("reasoning_mandatory") or model in _REASONING_MANDATORY
-        if thinking is False and "thinking" not in allowed and "reasoning" in allowed and not mandatory:
-            body["reasoning"] = {"enabled": False}
-            body.pop("reasoning_effort", None)
-        elif entry.get("benchmark_slug") and "reasoning" in allowed and (thinking is True or reasoning_effort is not None):
-            body["reasoning"] = {"enabled": True}
-            if reasoning_effort is not None:
-                body["reasoning"]["effort"] = reasoning_effort
+        _set_reasoning(body, model, entry, allowed, thinking, reasoning_effort)
         if temperature is not None:
             body["temperature"] = temperature  # 0.0 is a real value here, unlike the other options
         if "usage" in allowed:
@@ -1128,38 +1171,22 @@ class ChatClient:
         # A registry entry may carry request fields of its own - the one that matters today is pinning an
         # OpenRouter model to a single upstream, so a leg the router calls "the same model" really is.
         # Filtered by the provider's allowed options, like every other non-standard field.
-        for k, v in (config.MODELS[model].get("extra") or {}).items():
+        for k, v in (entry.get("extra") or {}).items():
             if k in allowed:
                 body[k] = v
-        t0 = time.perf_counter()
+        return body
+
+    async def _post_chat(self, body: dict, model: str, free: bool, rest_budget_s: float | None, last_leg: bool) -> tuple[httpx.Response, int]:
+        """_post, sent once more without the reasoning switch when the model refuses to have reasoning turned off."""
         try:
-            r, attempts = await self._post(body, free=api_id.endswith(":free"), rest_budget_s=rest_budget_s, last_leg=last_leg)
+            return await self._post(body, free=free, rest_budget_s=rest_budget_s, last_leg=last_leg)
         except ApiError as err:
             if not (err.status == 400 and (body.get("reasoning") or {}).get("enabled") is False
                     and _REASONING_MANDATORY_400.search(err.body or "")):
                 raise
             _REASONING_MANDATORY.add(model)  # see _REASONING_MANDATORY_400: never send the switch to it again
             body.pop("reasoning", None)
-            r, attempts = await self._post(body, free=api_id.endswith(":free"), rest_budget_s=rest_budget_s, last_leg=last_leg)
-        data = r.json()
-        hdr = self.spec.get("upstream_header")
-        if hdr and isinstance(data, dict) and not data.get("provider") and r.headers.get(hdr):
-            data["provider"] = r.headers[hdr]  # a router that names the serving host in a header, not the body
-        choice = (data.get("choices") or [{}])[0]
-        usage = Usage.from_api(data.get("usage"))
-        now = dt.datetime.now(dt.timezone.utc)
-        # A provider that bills the call and says what it billed is the authority on its own cost; our price table
-        # is the fallback, and None ('- not measured') the fallback's fallback. OpenRouter routes one model id to
-        # several upstreams at different rates, so its number is the only honest one.
-        u = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-        # OpenRouter says `cost`, the Hugging Face router `estimated_cost`: both are the provider's own figure.
-        reported = _num(u.get("cost")) if u.get("cost") is not None else _num(u.get("estimated_cost"))
-        return ChatResult(
-            message=choice.get("message") or {}, finish_reason=choice.get("finish_reason") or "", usage=usage, model=model,
-            seconds=time.perf_counter() - t0,
-            cost_usd=reported if reported is not None else config.cost_usd(model, usage.hit, usage.miss, usage.out, now),
-            peak=config.is_peak(now), attempts=attempts, raw=data,
-        )
+            return await self._post(body, free=free, rest_budget_s=rest_budget_s, last_leg=last_leg)
 
     def _retry_delay(self, attempt: int, retry_after: str | None) -> float:
         """Honour a Retry-After header when it is longer than our own backoff."""

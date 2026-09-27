@@ -116,21 +116,37 @@ def pick_nearest(lines: list[int], near_line: int | None) -> int | None:
     return ranked[0] if first <= NEAR_LINE_WINDOW and first < second else None
 
 
+def _indent_pairs(query: list[str], block: list[str]) -> list[tuple[int, str, str]]:
+    """(query line index, its indent, the block's indent) for each line pair that has text; one first-line pair when
+    the line counts differ."""
+    if len(query) == len(block):
+        return [(k, _indent(a), _indent(b)) for k, (a, b) in enumerate(zip(query, block)) if a.strip() and b.strip()]
+    first = [next((s for s in lines if s.strip()), "") for lines in (query, block)]
+    return [(-1, _indent(first[0]), _indent(first[1]))]
+
+
+def _mid_line_start(query: list[str]) -> bool:
+    """A first line typed with no indent above indented lines: the model started its copy mid-line."""
+    return bool(query and query[0].strip() and not _indent(query[0]) and any(_indent(s) for s in query[1:] if s.strip()))
+
+
+def _shift(new_lines: list[str], from_ws: str, to_ws: str) -> list[str]:
+    if from_ws == to_ws:
+        return list(new_lines)
+    return [to_ws + s[len(from_ws) :] if s.strip() and s.startswith(from_ws) else s for s in new_lines]
+
+
 def _reindent(new_lines: list[str], query: list[str], block: list[str]) -> tuple[list[str], str, str]:
     """Shift new_string by the indent old_string was off from the block it matched; returns (lines, from, to)."""
-    if len(query) == len(block):
-        pairs = [(k, _indent(a), _indent(b)) for k, (a, b) in enumerate(zip(query, block)) if a.strip() and b.strip()]
-    else:
-        first = [next((s for s in lines if s.strip()), "") for lines in (query, block)]
-        pairs = [(-1, _indent(first[0]), _indent(first[1]))]
+    pairs = _indent_pairs(query, block)
     # A first line typed with no indent above indented lines is the model starting its copy mid-line, not
     # a shift of the whole block: judge the shift by the other lines, and give that line the file's indent.
-    artifact = bool(query and query[0].strip() and not _indent(query[0]) and any(_indent(s) for s in query[1:] if s.strip()))
+    artifact = _mid_line_start(query)
     if artifact and len(pairs) > 1 and pairs[0][0] == 0:
         pairs = pairs[1:]
     shifts = Counter((a, b) for _, a, b in pairs)
     from_ws, to_ws = shifts.most_common(1)[0][0] if shifts else ("", "")
-    out = [to_ws + s[len(from_ws) :] if s.strip() and s.startswith(from_ws) else s for s in new_lines] if from_ws != to_ws else list(new_lines)
+    out = _shift(new_lines, from_ws, to_ws)
     if artifact and out and out[0].strip() and not _indent(out[0]) and block:
         out[0] = _indent(block[0]) + out[0]
     return out, from_ws, to_ws

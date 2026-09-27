@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime as dt
+import functools
 import hashlib
 import json
 import os
@@ -103,6 +104,31 @@ def _taint_failover(res: Result, dead: list[dict]) -> None:
     """Taint F when a later leg served, and keep every dead leg's own letters: a taint is sticky across legs too."""
     if dead:
         res.add_taint("F", *(d.get("taint") or "" for d in dead))
+
+
+def _dead_leg(leg: str, res: Result, transcript: object, cc: bool) -> dict:
+    """What a leg that could not serve leaves on the result that did: its spend, error and taint (JobManager._run_route)."""
+    return {"model": leg, "error": (res.error or "")[:300], "cost_usd": res.cost_usd, "usage": dict(res.usage),
+            "turns": res.turns, "seconds": res.seconds, **({"transcript": transcript} if cc else {"api_seconds": res.api_seconds}),
+            "taint": res.taint}
+
+
+def _name_stalls(res: Result, dead: list[dict]) -> None:
+    # A leg that failed over because it STALLED (client._post's read-timeout retry, raised as an
+    # ApiError 504) is named here too, so a task that recovers on its next leg still shows the stall
+    # in the ledger - not only the ones that ran out of legs and ended the whole task in "error".
+    res.stalled = [d["model"] for d in dead if "stalled:" in d["error"]]
+    if res.status == "error" and "stalled:" in (res.error or ""):
+        res.stalled.append(res.model)
+
+
+def _carry_dead_run(new: Result, old: Result, reruns: int) -> Result:
+    """A dead-task rerun's result, carrying the run before it: its spend, edits and the legs that could not serve."""
+    add_spend(new, [old])
+    new.files_changed = sorted(set(new.files_changed + old.files_changed))
+    new.failover = list(dict.fromkeys([*old.failover, old.model, *new.failover]))
+    new.selection = {**(new.selection or {}), "dead_reruns": reruns}
+    return new
 
 
 def too_large_for_route(tried: list[tuple[str, str]], tool_free: bool) -> str:
@@ -615,6 +641,27 @@ class JobManager:
         if task.profile:
             from .dispatch import run_selected
             return await run_selected(self, job, task, warm, is_pilot)
+        legs, terminal = self._route_legs(task, cc)
+        spent = _spent_legs(task.model, legs) if task.route and not cc else []
+        if not is_pilot and warm is not None:
+            # Before any gate: a follower holding a gate slot while it waits for the pilot's first reply could
+            # starve the pilot of the very slot it needs to give that reply.
+            await warm.wait()
+        res, transcript, dead = await self._walk_route(job, task, legs, terminal, spent, warm, is_pilot)
+        add_spend(res, dead)
+        res.failover = [d["model"] for d in dead]
+        _taint_failover(res, dead)
+        if cc:
+            if dead and isinstance(transcript, dict):
+                transcript["failover_runs"] = dead
+            return res, transcript
+        _name_stalls(res, dead)
+        settle_too_large(res, [(d["model"], d["error"]) for d in dead] + [(res.model, res.error)], task.tools == "none")
+        return res, transcript
+
+    def _route_legs(self, task: Task, cc: bool) -> tuple[list[str], int]:
+        """(legs, terminal) for a task that is not on a profile: its route in run order, and the index of its real
+        last leg."""
         legs = self.route_plan(task.model, **({"backend": "cc"} if cc else {})) if task.route else [task.model]
         if cc:
             legs = [leg for leg in legs if config.PROVIDERS[config.provider_of(leg)].get("anthropic_url")] or [task.model]
@@ -627,71 +674,65 @@ class JobManager:
         else:
             front, back = list(legs), []
         legs = front + back
-        spent = _spent_legs(task.model, legs) if task.route and not cc else []
         # The route's real last leg is the last one no closed leg follows, not the last in the list: timed by list
         # position, a healthy fallback put ahead of an open primary would run under SlowLeg and fail over onto the
         # dead leg, and a cut-short route would trip the demoted leg. The open legs behind it are the last resort.
         terminal = len(front) - 1 if front else len(legs) - 1
+        return legs, terminal
+
+    async def _walk_route(self, job: Job, task: Task, legs: list[str], terminal: int, spent: list[str],
+                          warm: asyncio.Event | None, is_pilot: bool) -> tuple[Result, object, list[dict]]:
+        """Run the legs in order until one serves, fails for a reason another leg cannot fix, or the route is cut
+        short; returns (result, transcript, the dead legs before it)."""
+        cc = task.backend == "cc"
         dead: list[dict] = []
         res: Result | None = None
         transcript: object = {} if cc else None
-        if not is_pilot and warm is not None:
-            # Before any gate: a follower holding a gate slot while it waits for the pilot's first reply could
-            # starve the pilot of the very slot it needs to give that reply.
-            await warm.wait()
         for i, leg in enumerate(legs):
             task.model = job.results[task.id].model = leg
-            last = i >= terminal
             cut_short = i == terminal and bool(spent)  # the caller's own model is the next leg (see NO_CREDIT_TRIP_S)
             if cut_short and (msg := _tripped(leg)):
                 res, transcript = Result(id=task.id, backend="api", model=leg, status="error", error=msg, started=now_iso(), finished=now_iso()), None
                 break
-            try:
-                client = self.client_for(leg)
-                await self._park_broke_keys(client)
-                if cc:
-                    res, transcript = await self._run_cc_with_rotation(task, client.pool)
-                else:
-                    # A crawling leg fails over too, but only while there is a next leg to go to (config.SLOW_LEG_TURN_S).
-                    slow = config.SLOW_LEG_TURN_S if not last or cut_short else None
-                    if cut_short:
-                        self._exposed.setdefault(job.id, {})[task.id] = leg
-                    gate = self._gate_for(leg, client)
-                    ceiling = self._budgets.get(job.id)  # the job's budget_usd, reserved against before every api turn
-                    res, transcript = await self._gated(job, gate, run_api_task(client, task, warm=warm, is_pilot=is_pilot, user_tag=job.id, slow_turn_s=slow,
-                                                                                **({"job_budget": ceiling} if ceiling is not None else {})))
-            except RuntimeError as e:  # no key at all for that provider: the leg cannot serve
-                res = Result(id=task.id, backend=task.backend, model=leg, status="error", error=f"NoUsableKey: {e}", started=now_iso(), finished=now_iso())
-                transcript = {} if cc else None
-            finally:
-                self._exposed.get(job.id, {}).pop(task.id, None)
-            if task.route:
-                breaker.record(f"cc:{leg}" if cc else leg, res, leg_unavailable(res))
-            if cut_short and leg_unavailable(res) and not too_large(res):
-                res.error = _tripped(leg) or no_credit_left(leg, spent, res.error or "")
-                self._trip(job, leg, res.error, strict=not task.route)
+            # A crawling leg fails over too, but only while there is a next leg to go to (config.SLOW_LEG_TURN_S).
+            slow = config.SLOW_LEG_TURN_S if i < terminal or cut_short else None
+            res, transcript = await self._route_leg(job, task, leg, slow, cut_short, warm, is_pilot)
+            self._settle_leg(job, task, leg, res, cut_short, spent)
             # A cut-short route ends at its terminal leg: past it the caller's own model beats a leg known down.
             if i == len(legs) - 1 or cut_short or not leg_unavailable(res):
                 break
-            dead.append({"model": leg, "error": (res.error or "")[:300], "cost_usd": res.cost_usd, "usage": dict(res.usage),
-                         "turns": res.turns, "seconds": res.seconds, **({"transcript": transcript} if cc else {"api_seconds": res.api_seconds}),
-                         "taint": res.taint})
+            dead.append(_dead_leg(leg, res, transcript, cc))
             is_pilot = False  # the pilot already released the others when its first leg ended
-        add_spend(res, dead)
-        res.failover = [d["model"] for d in dead]
-        _taint_failover(res, dead)
-        if cc:
-            if dead and isinstance(transcript, dict):
-                transcript["failover_runs"] = dead
-            return res, transcript
-        # A leg that failed over because it STALLED (client._post's read-timeout retry, raised as an
-        # ApiError 504) is named here too, so a task that recovers on its next leg still shows the stall
-        # in the ledger - not only the ones that ran out of legs and ended the whole task in "error".
-        res.stalled = [d["model"] for d in dead if "stalled:" in d["error"]]
-        if res.status == "error" and "stalled:" in (res.error or ""):
-            res.stalled.append(res.model)
-        settle_too_large(res, [(d["model"], d["error"]) for d in dead] + [(res.model, res.error)], task.tools == "none")
-        return res, transcript
+        return res, transcript, dead
+
+    async def _route_leg(self, job: Job, task: Task, leg: str, slow: float | None, cut_short: bool,
+                         warm: asyncio.Event | None, is_pilot: bool) -> tuple[Result, object]:
+        """One leg of a route: its (result, transcript), a leg with no key at all answering NoUsableKey."""
+        cc = task.backend == "cc"
+        try:
+            client = self.client_for(leg)
+            await self._park_broke_keys(client)
+            if cc:
+                return await self._run_cc_with_rotation(task, client.pool)
+            if cut_short:
+                self._exposed.setdefault(job.id, {})[task.id] = leg
+            gate = self._gate_for(leg, client)
+            ceiling = self._budgets.get(job.id)  # the job's budget_usd, reserved against before every api turn
+            return await self._gated(job, gate, run_api_task(client, task, warm=warm, is_pilot=is_pilot, user_tag=job.id, slow_turn_s=slow,
+                                                             **({"job_budget": ceiling} if ceiling is not None else {})))
+        except RuntimeError as e:  # no key at all for that provider: the leg cannot serve
+            res = Result(id=task.id, backend=task.backend, model=leg, status="error", error=f"NoUsableKey: {e}", started=now_iso(), finished=now_iso())
+            return res, ({} if cc else None)
+        finally:
+            self._exposed.get(job.id, {}).pop(task.id, None)
+
+    def _settle_leg(self, job: Job, task: Task, leg: str, res: Result, cut_short: bool, spent: list[str]) -> None:
+        """Record a leg's outcome on its breaker, and trip a cut-short route whose last leg could not serve."""
+        if task.route:
+            breaker.record(f"cc:{leg}" if task.backend == "cc" else leg, res, leg_unavailable(res))
+        if cut_short and leg_unavailable(res) and not too_large(res):
+            res.error = _tripped(leg) or no_credit_left(leg, spent, res.error or "")
+            self._trip(job, leg, res.error, strict=not task.route)
 
     def _gate_for(self, model: str, client: object) -> LegGate | None:
         """The provider's LegGate, its cap re-read from the pool's usable keys, wired into the client so a 200 opens
@@ -1058,56 +1099,9 @@ class JobManager:
         async with _Slot(sem) as slot:
             res.status, res.started = "running", now_iso()
             try:
-                if task.scripted:
-                    # Known limit: a key-rotation retry re-runs the worker on a cwd a dead leg may already have edited,
-                    # while the replay starts from this snapshot, so such a retry can end in a false ScriptMismatch.
-                    base = await scripted.snapshot(task.cwd)
-                # A task that opted into escalation also reads the skills earlier escalations banked for its kind.
-                applied = escalation.apply_skills(task) if task.backend == "api" and task.escalate else []
-
-                async def attempt(t: Task, first: bool) -> tuple[Result, object]:
-                    # Routed at DISPATCH, not at submit: peak/off-peak can flip and keys can run out while a
-                    # long job is still going, and the Result carries the leg that actually served the call,
-                    # so the ledger never claims a route that did not happen.
-                    r, tr = await self._run_legs(job, t, warm, is_pilot and first)
-                    # Every leg could not serve (keys out, pools saturated from outside, hosts down): rest and run
-                    # it again on the whole ladder with the budget left, rather than hand the caller a dead task
-                    # (owner, 2026-09-25: "rerun them if they're dead"). A strict pin (route=False) stays one try.
-                    # Bounded by time, not a count: four reruns in half an hour did not outlast one evening's Gemini
-                    # saturation (job 20260926-003426-92c1), and each came back to the caller as a dead task.
-                    reruns, dead_since = 0, time.monotonic()
-                    while t.route and needs_other_route(r) and time.monotonic() - dead_since < config.DEAD_RERUN_PATIENCE_S:
-                        again = remaining(t, r)
-                        if again is None:
-                            break
-                        reruns += 1
-                        if is_pilot:
-                            warm.set()  # the siblings do not wait out the pilot's rest; a rerun needs no warm-up
-                        rest = min(config.DEAD_RERUN_REST_S * 2 ** (reruns - 1), config.DEAD_RERUN_REST_MAX_S)
-                        res.next_action = f"no route could serve it; rerun {reruns} in {rest:.0f} s ({(r.error or '')[:160]})"
-                        await slot.rest(rest)  # the job's other tasks run in this slot meanwhile
-                        res.next_action = ""
-                        r2, tr = await self._run_legs(job, again, None, False)
-                        add_spend(r2, [r])
-                        r2.files_changed = sorted(set(r2.files_changed + r.files_changed))
-                        r2.failover = list(dict.fromkeys([*r.failover, r.model, *r2.failover]))
-                        r2.selection = {**(r2.selection or {}), "dead_reruns": reruns}
-                        r = r2
-                    if t.backend == "api" and t.escalate:
-                        r, tr = await self._escalate(job, t, r, tr, warm)
-                    return r, tr
-
-                if task.verify:
-                    res, transcript = await verify.run_verified(task, attempt, judge=self._judge)
-                else:
-                    res, transcript = await attempt(task, True)
-                res.skills = applied
+                res, transcript, base = await self._serve(job, task, warm, is_pilot, slot, res)
             except asyncio.CancelledError:
-                # Stopped by a sibling's NoCreditLeft trip (JobManager._trip): an error with that message, not a cancel.
-                tripped = (res.error or "").startswith("NoCreditLeft:")
-                res.status, res.error, res.finished = "error" if tripped else "cancelled", res.error or "cancelled", now_iso()
-                job.results[task.id] = res
-                self._journal(job, task, res, transcript)
+                self._record_cancel(job, task, res, transcript)
                 raise
             except Exception as e:  # noqa: BLE001 - a backend that raises before producing a Result (no key, bad binary) must not leave the task "running" forever
                 res.status, res.error, res.finished = "error", f"{type(e).__name__}: {e}", now_iso()
@@ -1127,6 +1121,70 @@ class JobManager:
                 res.status, res.error = "error", f"ScriptedDiff: {type(e).__name__}: {e}"
             if res.status == "running":
                 res.status = "ok"
+        self._settle_one(job, task, res, transcript)
+
+    async def _serve(self, job: Job, task: Task, warm: asyncio.Event, is_pilot: bool, slot: _Slot,
+                     row: Result) -> tuple[Result, object, str]:
+        """Run the task (verified when it asks to be): (result, transcript, the scripted starting tree or "")."""
+        base = ""  # a scripted task's starting tree, which its script is replayed from
+        if task.scripted:
+            # Known limit: a key-rotation retry re-runs the worker on a cwd a dead leg may already have edited,
+            # while the replay starts from this snapshot, so such a retry can end in a false ScriptMismatch.
+            base = await scripted.snapshot(task.cwd)
+        # A task that opted into escalation also reads the skills earlier escalations banked for its kind.
+        applied = escalation.apply_skills(task) if task.backend == "api" and task.escalate else []
+        attempt = functools.partial(self._attempt, job, warm, is_pilot, slot, row)
+        if task.verify:
+            res, transcript = await verify.run_verified(task, attempt, judge=self._judge)
+        else:
+            res, transcript = await attempt(task, True)
+        res.skills = applied
+        return res, transcript, base
+
+    async def _attempt(self, job: Job, warm: asyncio.Event, is_pilot: bool, slot: _Slot, row: Result,
+                       t: Task, first: bool) -> tuple[Result, object]:
+        """One attempt at `t` (verify.run_verified's `attempt(task, first)`), `row` being the job's running result."""
+        # Routed at DISPATCH, not at submit: peak/off-peak can flip and keys can run out while a
+        # long job is still going, and the Result carries the leg that actually served the call,
+        # so the ledger never claims a route that did not happen.
+        r, tr = await self._run_legs(job, t, warm, is_pilot and first)
+        r, tr = await self._rerun_dead(job, t, r, tr, warm, is_pilot, slot, row)
+        if t.backend == "api" and t.escalate:
+            r, tr = await self._escalate(job, t, r, tr, warm)
+        return r, tr
+
+    async def _rerun_dead(self, job: Job, t: Task, r: Result, tr: object, warm: asyncio.Event, is_pilot: bool,
+                          slot: _Slot, row: Result) -> tuple[Result, object]:
+        # Every leg could not serve (keys out, pools saturated from outside, hosts down): rest and run
+        # it again on the whole ladder with the budget left, rather than hand the caller a dead task
+        # (owner, 2026-09-25: "rerun them if they're dead"). A strict pin (route=False) stays one try.
+        # Bounded by time, not a count: four reruns in half an hour did not outlast one evening's Gemini
+        # saturation (job 20260926-003426-92c1), and each came back to the caller as a dead task.
+        reruns, dead_since = 0, time.monotonic()
+        while t.route and needs_other_route(r) and time.monotonic() - dead_since < config.DEAD_RERUN_PATIENCE_S:
+            again = remaining(t, r)
+            if again is None:
+                break
+            reruns += 1
+            if is_pilot:
+                warm.set()  # the siblings do not wait out the pilot's rest; a rerun needs no warm-up
+            rest = min(config.DEAD_RERUN_REST_S * 2 ** (reruns - 1), config.DEAD_RERUN_REST_MAX_S)
+            row.next_action = f"no route could serve it; rerun {reruns} in {rest:.0f} s ({(r.error or '')[:160]})"
+            await slot.rest(rest)  # the job's other tasks run in this slot meanwhile
+            row.next_action = ""
+            r2, tr = await self._run_legs(job, again, None, False)
+            r = _carry_dead_run(r2, r, reruns)
+        return r, tr
+
+    def _record_cancel(self, job: Job, task: Task, res: Result, transcript: object) -> None:
+        # Stopped by a sibling's NoCreditLeft trip (JobManager._trip): an error with that message, not a cancel.
+        tripped = (res.error or "").startswith("NoCreditLeft:")
+        res.status, res.error, res.finished = "error" if tripped else "cancelled", res.error or "cancelled", now_iso()
+        job.results[task.id] = res
+        self._journal(job, task, res, transcript)
+
+    def _settle_one(self, job: Job, task: Task, res: Result, transcript: object) -> None:
+        """A finished task's last word: its receipt gate and labels, its journal line, and the job budget's reading."""
         if task.inventory:
             # The coverage gate is zswarm's, not the worker's: whatever the backend, an ok result whose receipt does
             # not equal the declared inventory is an IncompleteReview error, never a silent partial "no issues".
@@ -1226,6 +1284,14 @@ class JobManager:
         await asyncio.to_thread(survival.score_due)
         job.save()
         job._done.set()
+        from . import fleetstats  # counts only: how many tasks, how many came back ok (fleetstats.py)
+
+        fleetstats.send(
+            "job_done",
+            tasks=len(job.results),
+            ok=sum(1 for r in job.results.values() if getattr(r, "status", "") == "ok"),
+            state=job.state,
+        )
 
     # ---- query ----------------------------------------------------------------
 

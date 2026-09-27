@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from urllib.parse import urlsplit
 
@@ -28,7 +29,10 @@ import httpx
 from . import config, egress
 
 URL = config.PROVIDERS["typesafe"]["base_url"] + "/systemone"
-MODEL = "jev-latest"
+# PINNED, not the jev-latest alias: zswarm_decide's 0.7 threshold and Dredd's seat thresholds were tuned on this
+# version's probabilities, and TypeSafe's models page says to pin the version a threshold was tuned against because
+# the alias moves with each release. Move it after bench/decide.py has measured the new version.
+MODEL = "jev-1.13.0"
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
 RETRYABLE = {429, 500, 502, 503, 504, 529}
 KEY_DEAD = {401, 402, 403}  # a bad, unpaid or unpermitted key does not heal inside a run
@@ -52,7 +56,8 @@ class Jev:
     """Async client: round-robin over the key pool, backoff on limits and overload (honouring retry-after),
     a key that answers 401/402/403 leaves the rotation for the life of this client."""
 
-    def __init__(self, keys: list[str] | None = None, concurrency: int = 16, timeout: float = 120.0, http: httpx.AsyncClient | None = None,
+    # 30 s: an answer takes 0.15-2 s, so a longer wait is a hung connection, and a timeout is retried like a 5xx.
+    def __init__(self, keys: list[str] | None = None, concurrency: int = 16, timeout: float = 30.0, http: httpx.AsyncClient | None = None,
                  *, url: str = URL, usd_per_input_token: float = USD_PER_INPUT_TOKEN, keyless: bool = False, min_interval: float = 0.0):
         self.url, self.keyless, self.min_interval = url, keyless, min_interval
         self.usd_per_input_token = usd_per_input_token
@@ -142,7 +147,13 @@ class Jev:
                 if resp.status_code not in RETRYABLE:
                     return last  # a 422 is a malformed question: resending it unchanged fails the same way
                 ra = resp.headers.get("retry-after")
-                await asyncio.sleep(float(ra) if ra and ra.replace(".", "", 1).isdigit() else min(2 * 2 ** attempt, 60))
+                await asyncio.sleep(float(ra) if ra and ra.replace(".", "", 1).isdigit() else _backoff(attempt))
             else:
-                await asyncio.sleep(min(2 * 2 ** attempt, 60))
+                await asyncio.sleep(_backoff(attempt))
         return last
+
+
+def _backoff(attempt: int) -> float:
+    """Exponential, capped at 60 s, less up to a quarter at random so a burst of concurrent calls refused together
+    does not come back together (the TypeSafe SDK's backoff_jitter)."""
+    return min(2 * 2 ** attempt, 60) * (1 - 0.25 * random.random())
