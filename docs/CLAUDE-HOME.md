@@ -20,7 +20,7 @@ in the clone and in `~/.zswarm` (the README's "What lives in `~/.zswarm`").
 | `.claude/projects/` | `zswarm/claude_usage.py` (`savings`), `zswarm/distill.py`, `zswarm/procedures.py` | Claude Code's session transcripts: this machine's own Claude usage for savings, and the input to the memory distiller and procedure miner. `ZSWARM_CLAUDE_PROJECTS` or `--root` points elsewhere. Layout: `<project slug>/<session>.jsonl`; a sub-agent's transcript is `<project slug>/<session>/subagents/agent-<id>.jsonl` beside a `.meta.json` naming its agent type. Dedupe on `requestId` before summing usage. |
 | `.claude/settings.json` | `zswarm/toolhooks.py` | Only when `ZSWARM_API_HOOKS=claude`: the operator's hooks, run on an `api` worker's tool calls (README, "Claude Code hooks on the `api` backend"). |
 | `.claude/tools/agent_shield.py` | `zswarm/claude_env.py` | When present, the one hook a `cc` worker inherits (PostToolUse, a prompt-injection screen). Absent, the worker simply has no hooks. |
-| the default Claude Code login | headless `claude -p` outside zswarm | Not used by zswarm workers. Bench arms that ran `claude -p` on it failed when its OAuth session expired ([BENCH-2026-09-15.md](BENCH-2026-09-15.md)). |
+| the default Claude Code login | headless `claude -p` outside zswarm | Not used by zswarm workers. Bench arms that ran `claude -p` on it failed when its OAuth session expired (BENCH-2026-09-15.md). |
 
 ## What zswarm keeps out of it
 
@@ -38,4 +38,4 @@ by `node install.mjs` in that repo after every pull. It holds the global `CLAUDE
 `agent_routing_gate`, which writes `~/.zswarm/routing.jsonl`), the tools (`agent_shield.py`, and the memory
 tools `memlint`, `memcurate`, `memsearch`, `memapply`), the skills (among them `zswarm-routing`) and the
 commands. zswarm does not need it: without it there is no shield hook and no routing gate, and everything
-above still works. Where it all lives: [WHERE-EVERYTHING-LIVES.md](WHERE-EVERYTHING-LIVES.md).
+above still works. Where it all lives: WHERE-EVERYTHING-LIVES.md.

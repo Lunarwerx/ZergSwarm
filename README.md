@@ -285,7 +285,7 @@ python scripts/console_dev.py  # the console against a scratch home, on port 781
 ```
 
 `python zswarm.py <command>` also runs straight from a clone once `httpx`, `jsonschema`, `mcp` and `tomlkit` are
-installed. A release is a tag: push `v<version>` and [the release workflow](public/.github/workflows/release.yml) tests,
+installed. A release is a tag: push `v<version>` and [the release workflow](.github/workflows/release.yml) tests,
 builds, installs the wheel on Windows, macOS and Linux, and publishes it. Layout and conventions for
 contributors, human or agent, are in [AGENTS.md](AGENTS.md).
 
