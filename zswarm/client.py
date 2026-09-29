@@ -59,6 +59,7 @@ except ImportError:  # pragma: no cover - POSIX
     import fcntl
 
 from . import config, egress, faults
+from .shared import atomic_write
 from .usage import ApiError, ChatResult, Usage, request_body  # noqa: F401 - re-exported
 
 # Seconds the running task's calls spent rate-limited, from a call's first 429 to its reply or its give-up. That is
@@ -407,13 +408,14 @@ class KeyPool:
 
     def _save(self) -> None:
         p = config.KEYS_STATE
+        # Compact, and through atomic_write: it retries the swap while another process reads the file (Windows) and a
+        # temp file is never left behind. A bare os.replace that Windows refused left a 1.8 MB keys.json.<pid>.tmp
+        # each time (28 of them in one home, 2026-09-29) and lost that write's state change.
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")  # one per process: a shared name was torn between two
-            tmp.write_text(json.dumps(self._state, indent=1), encoding="utf-8")
-            os.replace(tmp, p)
+            atomic_write(p, json.dumps(self._state, separators=(",", ":")))
         except OSError:
-            pass
+            with contextlib.suppress(OSError):
+                p.with_name(f"{p.name}.{os.getpid()}.tmp").unlink(missing_ok=True)
 
     def _locked(self):
         """Hold the state file's lock (`keys.json.lock` beside it) across one read-modify-write (file_lock)."""

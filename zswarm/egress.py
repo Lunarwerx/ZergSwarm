@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -153,26 +154,49 @@ def record(sink: str, payload: bytes, provider: str = "", model: str = "") -> di
         return None
 
 
-def verify(path: Path | None = None) -> dict:
+# How far this process has already walked each ledger: path -> (offset, lines, raw last line). The doctor verifies
+# on every call and the ledger only grows (318 MB on one machine, 2026-09-29: seconds of CPU per zswarm_doctor, on
+# the shared server's loop), so an incremental verify reads only the bytes appended since.
+_VERIFIED: dict[str, tuple[int, int, bytes]] = {}
+_VERIFY_LOCK = threading.Lock()
+
+
+def verify(path: Path | None = None, incremental: bool = False) -> dict:
     """Recompute the chain. {ok, lines, path}, plus broken_at (1-based line) and reason when not ok; a missing
-    ledger is ok with 0 lines."""
+    ledger is ok with 0 lines.
+
+    incremental=True (the doctor) starts after the lines this process already verified, when the file did not
+    shrink and its last verified line is still where it was; otherwise it walks the whole file. An edit inside the
+    part already verified is caught by the full walk, which `zswarm egress verify` always does."""
     p = path or ledger_path()
     if not p.exists():
         return {"ok": True, "lines": 0, "path": str(p)}
-    prev = b""
-    n = 0
-    with p.open("rb") as f:
-        for raw in f:
-            n += 1
-            line = raw.rstrip(b"\r\n")
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                return {"ok": False, "lines": n, "broken_at": n, "reason": "not JSON", "path": str(p)}
-            want = _sha(prev) if prev else ""
-            if not isinstance(entry, dict) or entry.get("prev") != want:
-                return {"ok": False, "lines": n, "broken_at": n, "reason": "prev does not match the line before", "path": str(p)}
-            prev = line
+    with _VERIFY_LOCK, p.open("rb") as f:
+        start, n, last = 0, 0, b""
+        seen = _VERIFIED.get(str(p)) if incremental else None
+        if seen and f.seek(0, os.SEEK_END) >= seen[0]:
+            f.seek(seen[0] - len(seen[2]))
+            if f.read(len(seen[2])) == seen[2]:
+                start, n, last = seen
+        f.seek(start)
+        prev, good = last.rstrip(b"\r\n"), (start, n, last)
+        try:
+            for raw in f:
+                n += 1
+                line = raw.rstrip(b"\r\n")
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    return {"ok": False, "lines": n, "broken_at": n, "reason": "not JSON", "path": str(p)}
+                want = _sha(prev) if prev else ""
+                if not isinstance(entry, dict) or entry.get("prev") != want:
+                    return {"ok": False, "lines": n, "broken_at": n, "reason": "prev does not match the line before", "path": str(p)}
+                prev = line
+                if raw.endswith(b"\n"):  # a line still being appended is verified again next time, whole
+                    good = (good[0] + len(raw), n, raw)
+        finally:
+            if good[1]:
+                _VERIFIED[str(p)] = good
     return {"ok": True, "lines": n, "path": str(p)}
 
 

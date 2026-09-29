@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import secrets
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +46,7 @@ class Job:
     results: dict[str, Result] = field(default_factory=dict)
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _journaled: set[str] = field(default_factory=set, repr=False)  # task ids whose result is in results.jsonl
 
     @property
     def dir(self) -> Path:
@@ -153,7 +155,7 @@ class Job:
             "dir": str(self.dir),
         }
 
-    def to_dict(self, blob_dir: Path | None = None, summary: dict | None = None) -> dict:
+    def to_dict(self, blob_dir: Path | None = None, summary: dict | None = None, omit: set[str] | frozenset = frozenset()) -> dict:
         """The job record. With `blob_dir`, each task's long strings (the shared system prompt, a big schema)
         move to a blob there and the task keeps a short `<field>_ref`: one copy per job instead of one per
         task, which is the whole difference between 271 MiB and 1 MiB on a 1,844-task job. Without it the
@@ -173,16 +175,21 @@ class Job:
             "task_models": dict(self.task_models),
             "concurrency": self.concurrency,
             "tasks": blobs.pack_all(tasks, blob_dir) if blob_dir else tasks,
-            "results": {k: v.as_dict() for k, v in self.results.items()},
+            "results": {k: v.as_dict() for k, v in self.results.items() if k not in omit},
         }
 
     def save(self, status: dict | None = None) -> None:
         """Atomic write: a reader that races the save sees the old file or the new one, never a torn one. The
-        summary carries `checkpoint_at`, which is how a reader tells a running job from one nothing runs any more."""
+        summary carries `checkpoint_at`, which is how a reader tells a running job from one nothing runs any more.
+
+        A checkpoint (`status` given, a running job) leaves out the results already appended to results.jsonl: every
+        reader of a running record folds that file over it (_overlay_live_results, adopt's _journaled), and writing
+        them again every CHECKPOINT_S rewrote a 37 MB record six times a minute on the loop. The last save is whole."""
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / "job.json.tmp"
         summary = {**(status or self.summary()), "checkpoint_at": now_iso()}
-        tmp.write_text(json.dumps(self.to_dict(blobs.blob_dir(self.dir), summary), indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+        omit = self._journaled if status is not None else frozenset()
+        tmp.write_text(json.dumps(self.to_dict(blobs.blob_dir(self.dir), summary, omit), indent=1, ensure_ascii=False, default=str), encoding="utf-8")
         os.replace(tmp, self.dir / "job.json")
 
     @staticmethod
@@ -275,12 +282,42 @@ class Job:
 
         out = []
         for job_id in archive.job_ids(max(1, limit)):
+            # A finished record is parsed once per process, not on every poll: the console lists jobs every 3 s,
+            # and one 37 MB job.json among the newest was parsed whole each time for its summary alone.
+            stamp = _record_stamp(job_id)
+            if stamp is not None and (hit := _FINISHED_SUMMARIES.get(job_id)) and hit[0] == stamp:
+                out.append(dict(hit[1]))
+                continue
             doc = archive.read_json(job_id, "job.json")
             if isinstance(doc, dict) and "summary" in doc:
                 # the same live overlay a single status read gets: a running job's checkpoint says "pending"
                 # for every task that has returned since, and zswarm_jobs is the first place anyone looks
-                out.append(Job._overlay_live_results(job_id, doc)["summary"])  # a half-written or foreign entry is skipped, not fatal
+                summary = Job._overlay_live_results(job_id, doc)["summary"]  # a half-written or foreign entry is skipped, not fatal
+                out.append(summary)
+                if stamp is not None and isinstance(summary, dict) and summary.get("finished"):
+                    with _FINISHED_LOCK:
+                        _FINISHED_SUMMARIES[job_id] = (stamp, dict(summary))
+                        while len(_FINISHED_SUMMARIES) > 512:
+                            _FINISHED_SUMMARIES.pop(next(iter(_FINISHED_SUMMARIES)))
         return out
+
+
+_FINISHED_SUMMARIES: dict[str, tuple[tuple, dict]] = {}  # job id -> (record stamp, the finished record's summary)
+_FINISHED_LOCK = threading.Lock()
+
+
+def _record_stamp(job_id: str) -> tuple | None:
+    """(path, mtime_ns, size) of the file archive.read_json(job_id, "job.json") reads: the folder's record, else the
+    archive. Any rewrite or archiving changes it."""
+    from . import archive
+
+    for p in (archive.job_dir(job_id) / "job.json", archive.archive_path(job_id)):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        return (str(p), st.st_mtime_ns, st.st_size)
+    return None
 
 
 def _live_row(line: str) -> dict | None:

@@ -64,6 +64,22 @@ def test_the_chain_verifies_and_an_edited_line_breaks_it_where_it_was_edited():
     assert not egress.verify()["ok"]
 
 
+def test_the_doctors_incremental_verify_still_fails_a_bad_append_and_a_ledger_rewritten_under_it():
+    """Regression: the doctor reads only what was appended since its last pass. A broken receipt appended after that
+    pass, and a ledger rewritten underneath its cached offset, must still fail rather than ride on the cache."""
+    for i in range(3):
+        egress.record("deepseek:api.test", f"body {i}".encode(), provider="deepseek", model="m")
+    path = egress.ledger_path()
+    good = path.read_bytes()
+    assert egress.verify(incremental=True) == {"ok": True, "lines": 3, "path": str(path)}
+    path.write_bytes(good + b'{"ts":"x","prev":"not the hash of line 3"}\n')
+    rep = egress.verify(incremental=True)
+    assert not rep["ok"] and rep["broken_at"] == 4
+    lines = good.splitlines(keepends=True)
+    path.write_bytes(lines[0] + lines[2] + lines[1])  # same size, reordered under the offset the doctor cached
+    assert not egress.verify(incremental=True)["ok"]
+
+
 def test_fail_closed_refuses_the_send_when_the_receipt_cannot_be_written(monkeypatch):
     """Contract: inside fail_closed() (distill/triage) no receipt means no request at all; outside it the send goes on."""
     sent: list[bytes] = []

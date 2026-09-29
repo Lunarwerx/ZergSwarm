@@ -1,6 +1,7 @@
 """Doctor and cost: the two read-only reports the MCP server and the CLI both expose."""
 from __future__ import annotations
 
+import asyncio
 import os
 from shutil import which
 
@@ -53,7 +54,8 @@ async def doctor(m: JobManager) -> dict:
     # The egress receipts' hash chain (egress.py): a tampered or truncated ledger shows up here, not only on request.
     from . import egress
 
-    out["egress_ledger"] = {**egress.verify(), "receipts_not_written_this_process": egress.FAILURES}
+    # Incremental and off the loop: only the receipts appended since this process last looked are read again.
+    out["egress_ledger"] = {**await asyncio.to_thread(egress.verify, incremental=True), "receipts_not_written_this_process": egress.FAILURES}
     # What AUTO can serve right now, per route, from the same offline state zswarm_run refuses a job on: a spent
     # free pool and a fallback with no credit are said HERE, not ten minutes into a job (2026-09-24). The routes are
     # AUTO's first picks for tool work and tool-free work on THIS machine's keys (dispatch.first_choice).

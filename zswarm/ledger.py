@@ -47,7 +47,8 @@ def ledger_rows(days: float) -> list[dict]:
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
     rows = []
     if config.LEDGER.exists():
-        with config.LEDGER.open(encoding="utf-8") as f:
+        with config.LEDGER.open("rb") as f:
+            f.seek(_window_start(f, since))
             for line in f:
                 try:
                     r = json.loads(line)
@@ -60,6 +61,28 @@ def ledger_rows(days: float) -> list[dict]:
         if (s := scores.get((r.get("job"), r.get("task")))) is not None:
             r["survival"] = s
     return rows
+
+
+def _window_start(f, since: dt.datetime) -> int:
+    """Where the rows newer than `since` begin, found from the ledger's END the way today_spend walks it: a block at a
+    time until a row an hour older than `since` shows up (parallel writers land a little out of order). A 1-day
+    usage read parsed every one of 197k rows (114 MB, 1-2 s on the shared server) until 2026-09-29."""
+    stop = since - dt.timedelta(hours=1)
+    carry = b""
+    pos = f.seek(0, os.SEEK_END)
+    while pos > 0:
+        step = min(1 << 20, pos)
+        pos -= step
+        f.seek(pos)
+        lines = (f.read(step) + carry).split(b"\n")
+        carry = lines.pop(0) if pos > 0 else b""  # cut mid-line: joined to the block before it on the next read
+        for line in lines:
+            try:
+                if dt.datetime.fromisoformat(json.loads(line)["ts"]) < stop:
+                    return pos + len(carry) + 1 if pos > 0 else 0  # the block's first whole line
+            except (ValueError, KeyError, TypeError):
+                continue
+    return 0
 
 
 _DAILY: dict = {"path": None, "offset": 0, "days": {}}

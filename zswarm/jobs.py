@@ -986,6 +986,7 @@ class JobManager:
                   task_models={t.id: t.model for t in tasks}, runner=self.runner())
         done = _journaled(folder)
         job.results.update({t.id: done[t.id] for t in tasks if t.id in done})
+        job._journaled.update(t.id for t in tasks if t.id in done)
         self.jobs[job_id] = job
         if (asked := folder / CANCEL_REQUEST).exists():
             return _honour_cancel(job, asked)
@@ -1237,6 +1238,7 @@ class JobManager:
             with (job.dir / "results.jsonl").open("a", encoding="utf-8") as f:
                 # `key` is the task's content hash: what a later resume_from_job matches this answer by.
                 f.write(json.dumps({**res.as_dict(), "key": job.task_keys.get(task.id, "")}, ensure_ascii=False) + "\n")
+            job._journaled.add(task.id)  # a checkpoint need not write this answer again (Job.save)
             if transcript is not None:
                 tdir = job.dir / "transcripts"
                 tdir.mkdir(exist_ok=True)

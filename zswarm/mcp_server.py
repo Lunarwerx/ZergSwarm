@@ -598,7 +598,7 @@ async def zswarm_sync(push: bool = True, restore: bool = False) -> dict:
 async def zswarm_usage(hours: float = 24.0) -> dict:
     """WHO used the swarm in the last N hours (per calling account / session / folder: jobs, tasks, ok/error, cost, labels),
     plus every Claude sub-agent decision the routing gate logged, with the fan-outs that matched the mechanical rule but went to Claude anyway."""
-    return usage_report(hours)
+    return await asyncio.to_thread(usage_report, hours)  # file reads: off the loop every chat's calls share
 
 
 @_served
