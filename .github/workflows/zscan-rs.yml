@@ -1,0 +1,46 @@
+name: zscan-rs
+
+# The native scanner. `zswarm native build` compiles it on a user's machine and the Python matrix in ci.yml never
+# builds it, so this is its only check. It runs only when the crate, the code that builds it (zswarm/native.py)
+# or this workflow changes, and builds the release profile, the one `zswarm native build` ships.
+#
+# rust-ci-speed: skip-verified not applied: a short hosted build that runs only when the crate changes; the
+# `already` job would cost about what it saves.
+# rust-ci-speed: the crate has no tests yet. When it gets some, this step becomes
+# `cargo test --locked --no-fail-fast` with the report-time runner wrapper (skill rust-ci-speed, move 4).
+
+on:
+  push:
+    # ci/** too: a measurement branch runs this before it lands (a new workflow cannot be dispatched off main).
+    branches: [main, "ci/**"]
+    paths:
+      - "native/zscan-rs/**"
+      - "zswarm/native.py"
+      - ".github/workflows/zscan-rs.yml"
+  pull_request:
+    paths:
+      - "native/zscan-rs/**"
+      - "zswarm/native.py"
+      - ".github/workflows/zscan-rs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: zscan-rs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: zscan-rs (build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: native/zscan-rs -> target
+      - name: Build (release, as users build it)
+        working-directory: native/zscan-rs
+        run: cargo build --release --locked
